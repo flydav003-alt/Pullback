@@ -1,17 +1,16 @@
 # ==============================================================================
-# 台股波段拉回選股工具 v3.0
-# 資料來源：FinMind API（台股專屬，穩定可靠）
-# 安全機制：API Token 存於 Streamlit Secrets，不寫入程式碼
-# 排程機制：每日 18:00（台灣時間）自動抓取；亦可手動觸發
+# 台股波段拉回選股工具 v3.1
+# 修正：① 深色 CSS 完整覆蓋 Streamlit 白色預設主題
+#       ② 篩選條件新增「寬鬆模式」及各條件獨立計數分析
+#       ③ 止跌轉折放寬：今收 > 前 N 日任一高點 OR 今收站回 MA20
 # ==============================================================================
 
 import re
 import io
 import time
 import warnings
-import threading
-from datetime import datetime, timedelta, date
-from zoneinfo import ZoneInfo          # Python 3.9+ 內建時區支援
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -23,145 +22,270 @@ import streamlit as st
 warnings.filterwarnings("ignore")
 
 # ==============================================================================
-# ── 0. 頁面設定（必須是第一個 Streamlit 呼叫）
+# ── 0. 頁面設定
 # ==============================================================================
 st.set_page_config(
-    page_title="台股波段拉回選股 v3",
+    page_title="台股波段拉回選股",
     page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ==============================================================================
-# ── 1. 時區常數
-# ==============================================================================
-TZ_TW = ZoneInfo("Asia/Taipei")   # 台灣時間 UTC+8
+TZ_TW = ZoneInfo("Asia/Taipei")
 
 # ==============================================================================
-# ── 2. 全域 CSS（深色主題，台股紅漲綠跌）
+# ── 1. 深色主題 CSS
+#    關鍵修正：強制覆蓋 Streamlit 的白色 header / toolbar / main block
 # ==============================================================================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap');
 
-html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
+/* ═══════════════════════════════════════════════
+   強制深色：覆蓋 Streamlit 所有預設白色區塊
+   ═══════════════════════════════════════════════ */
+html, body { background-color: #0a0e1a !important; }
 
-.stApp {
-    background: linear-gradient(135deg, #0a0e1a 0%, #0d1526 50%, #0a1020 100%);
+/* 最外層 App 容器 */
+.stApp,
+.stApp > div,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > section {
+    background-color: #0a0e1a !important;
+    background: #0a0e1a !important;
+}
+
+/* ⚠️ 頂部 toolbar / header（白色條的主因）*/
+[data-testid="stHeader"],
+[data-testid="stToolbar"],
+header[data-testid="stHeader"] {
+    background-color: #0a0e1a !important;
+    background: #0a0e1a !important;
+    border-bottom: 1px solid rgba(59,130,246,0.12) !important;
+}
+
+/* main content 區塊 */
+[data-testid="stMain"],
+[data-testid="block-container"],
+.main .block-container {
+    background-color: #0a0e1a !important;
+    padding-top: 1.5rem !important;
+    max-width: 100% !important;
+}
+
+/* 全域文字 */
+html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4 {
+    font-family: 'Noto Sans TC', sans-serif !important;
     color: #e2e8f0;
 }
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div {
+    background: #0d1829 !important;
+    border-right: 1px solid rgba(59,130,246,0.15) !important;
+}
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] div {
+    color: #cbd5e1 !important;
+}
+[data-testid="stSidebar"] .stMarkdown h3 {
+    color: #60a5fa !important;
+    font-size: 0.85rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid rgba(59,130,246,0.2);
+    padding-bottom: 6px;
+    margin-top: 4px;
+}
+
+/* ── Slider ── */
+[data-testid="stSlider"] label { color: #94a3b8 !important; font-size: 0.82rem !important; }
+[data-testid="stSlider"] p { color: #60a5fa !important; font-weight: 700 !important; }
+
+/* ── Radio ── */
+[data-testid="stRadio"] label { color: #94a3b8 !important; }
+[data-testid="stRadio"] div[role="radiogroup"] p { color: #e2e8f0 !important; }
+
+/* ── TextArea ── */
+textarea {
+    background-color: #0f1c30 !important;
+    color: #e2e8f0 !important;
+    border: 1px solid rgba(59,130,246,0.25) !important;
+    border-radius: 8px !important;
+}
+
+/* ── Caption / small text ── */
+[data-testid="stCaptionContainer"] p,
+small, .stCaption { color: #64748b !important; }
+
+/* ── Divider ── */
+hr { border-color: rgba(59,130,246,0.15) !important; margin: 10px 0 !important; }
+
+/* ── Metric 卡片 ── */
+[data-testid="stMetric"] {
+    background: linear-gradient(135deg, #1e2d4a 0%, #162038 100%) !important;
+    border: 1px solid rgba(59,130,246,0.22) !important;
+    border-radius: 12px !important;
+    padding: 16px 20px !important;
+}
+[data-testid="stMetricLabel"] p,
+[data-testid="stMetric"] label {
+    color: #64748b !important;
+    font-size: 0.75rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+[data-testid="stMetricValue"] {
+    color: #f1f5f9 !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 1.8rem !important;
+    font-weight: 700 !important;
+}
+[data-testid="stMetricDelta"] {
+    color: #22c55e !important;
+    font-size: 0.82rem !important;
+}
+
+/* ── Button ── */
+.stButton > button {
+    background: linear-gradient(135deg, #1d4ed8, #1e40af) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    padding: 10px 24px !important;
+    width: 100% !important;
+    transition: all 0.2s ease !important;
+}
+.stButton > button:hover {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 15px rgba(59,130,246,0.35) !important;
+}
+
+/* ── Progress bar ── */
+[data-testid="stProgressBar"] > div { background: rgba(59,130,246,0.15) !important; border-radius: 4px; }
+[data-testid="stProgressBar"] > div > div { background: linear-gradient(90deg,#3b82f6,#60a5fa) !important; }
+
+/* ── DataFrame ── */
+[data-testid="stDataFrame"] {
+    border: 1px solid rgba(59,130,246,0.18) !important;
+    border-radius: 10px !important;
+}
+
+/* ── Warning / Info ── */
+[data-testid="stAlert"] { border-radius: 8px !important; }
+
+/* ── Selectbox ── */
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+    background-color: #0f1c30 !important;
+    border-color: rgba(59,130,246,0.25) !important;
+    color: #e2e8f0 !important;
+}
+
+/* ════════════════════════════════════════════════
+   自訂元件樣式
+   ════════════════════════════════════════════════ */
+
+/* 英雄標題 */
 .hero-header {
-    background: linear-gradient(120deg, #1a2744 0%, #162038 40%, #1e1035 100%);
-    border: 1px solid rgba(59,130,246,0.25);
+    background: linear-gradient(120deg, #1a2744 0%, #162038 45%, #1e1035 100%);
+    border: 1px solid rgba(59,130,246,0.28);
     border-radius: 16px;
-    padding: 28px 36px;
-    margin-bottom: 20px;
+    padding: 26px 34px;
+    margin-bottom: 18px;
     position: relative;
     overflow: hidden;
 }
 .hero-header::before {
     content: '';
     position: absolute;
-    top: -60px; right: -60px;
-    width: 200px; height: 200px;
-    background: radial-gradient(circle, rgba(59,130,246,0.15) 0%, transparent 70%);
+    top: -50px; right: -50px;
+    width: 180px; height: 180px;
+    background: radial-gradient(circle, rgba(59,130,246,0.18) 0%, transparent 70%);
     border-radius: 50%;
+    pointer-events: none;
 }
 .hero-title {
-    font-size: 2.2rem;
+    font-size: 2rem;
     font-weight: 900;
-    background: linear-gradient(90deg, #60a5fa, #f87171, #fbbf24);
+    background: linear-gradient(90deg, #60a5fa 0%, #f87171 55%, #fbbf24 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    margin: 0 0 8px 0;
-    letter-spacing: -0.5px;
+    margin: 0 0 6px 0;
 }
-.hero-subtitle { color: #94a3b8; font-size: 0.95rem; margin: 0; }
+.hero-subtitle { color: #94a3b8 !important; font-size: 0.9rem; margin: 0; }
 
 /* 排程狀態卡 */
-.schedule-card {
-    background: linear-gradient(135deg, #0f2027 0%, #162533 100%);
-    border: 1px solid rgba(34,197,94,0.3);
+.sched-card {
+    background: #0f1e33;
+    border: 1px solid rgba(34,197,94,0.28);
     border-radius: 10px;
-    padding: 12px 18px;
-    margin-bottom: 12px;
-    font-size: 0.85rem;
+    padding: 12px 16px;
+    height: 70px;
 }
-.schedule-card.warn {
-    border-color: rgba(251,191,36,0.4);
-}
-.schedule-card .label { color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
-.schedule-card .value { color: #e2e8f0; font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-.schedule-card .highlight { color: #22c55e; font-weight: 700; }
-.schedule-card .warn-text { color: #fbbf24; font-weight: 700; }
+.sched-card.warn { border-color: rgba(251,191,36,0.38); }
+.sched-lbl { color: #475569; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+.sched-val { color: #e2e8f0; font-family: 'JetBrains Mono', monospace; font-size: 0.92rem; font-weight: 600; }
+.sched-val.green { color: #22c55e; }
+.sched-val.amber { color: #fbbf24; }
 
-/* 策略說明 */
-.strategy-info {
-    background: linear-gradient(135deg, #172035 0%, #1a2744 100%);
-    border-left: 4px solid #3b82f6;
+/* 策略說明欄 */
+.strat-info {
+    background: linear-gradient(135deg, #172035, #1c2a48);
+    border-left: 3px solid #3b82f6;
     border-radius: 8px;
-    padding: 16px 20px;
-    margin-bottom: 16px;
-    font-size: 0.88rem;
+    padding: 14px 18px;
+    margin-bottom: 14px;
+    font-size: 0.86rem;
     color: #94a3b8;
-    line-height: 1.7;
+    line-height: 1.75;
 }
-.strategy-info strong { color: #60a5fa; }
+.strat-info strong { color: #60a5fa; }
 
-/* Metric 卡片 */
-[data-testid="stMetric"] {
-    background: linear-gradient(135deg, #1e2d4a 0%, #162038 100%);
-    border: 1px solid rgba(59,130,246,0.2);
-    border-radius: 12px;
-    padding: 16px 20px !important;
+/* 條件漏斗分析卡 */
+.funnel-card {
+    background: #0f1e33;
+    border: 1px solid rgba(59,130,246,0.18);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 0.83rem;
 }
-[data-testid="stMetric"] label { color: #64748b !important; font-size: 0.8rem !important; font-weight: 500 !important; text-transform: uppercase; letter-spacing: 0.05em; }
-[data-testid="stMetricValue"] { color: #f1f5f9 !important; font-family: 'JetBrains Mono', monospace !important; font-size: 2rem !important; font-weight: 700 !important; }
+.funnel-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(59,130,246,0.08);
+    color: #94a3b8;
+}
+.funnel-row:last-child { border-bottom: none; }
+.funnel-pass { color: #22c55e; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+.funnel-label { color: #64748b; font-size: 0.78rem; }
 
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0d1829 0%, #0a1020 100%);
-    border-right: 1px solid rgba(59,130,246,0.15);
-}
-[data-testid="stSidebar"] .stMarkdown h3 { color: #60a5fa; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 1px solid rgba(59,130,246,0.2); padding-bottom: 6px; }
-
-/* 按鈕 */
-.stButton > button {
-    background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
-    color: white; border: none; border-radius: 8px;
-    font-weight: 600; font-size: 0.95rem;
-    padding: 10px 24px; width: 100%;
-    transition: all 0.2s ease;
-}
-.stButton > button:hover {
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(59,130,246,0.4);
-}
-
-/* 風險警示 */
-.risk-warning {
-    background: linear-gradient(135deg, #1f1510 0%, #2d1b0e 100%);
+/* 風險提醒 */
+.risk-warn {
+    background: linear-gradient(135deg, #1f1510, #2d1b0e);
     border: 1px solid rgba(251,191,36,0.3);
     border-radius: 8px;
-    padding: 14px 20px;
-    margin-top: 24px;
+    padding: 12px 18px;
+    margin-top: 22px;
     color: #fbbf24;
-    font-size: 0.82rem;
+    font-size: 0.8rem;
     text-align: center;
 }
-
-hr { border-color: rgba(59,130,246,0.15) !important; }
-[data-testid="stDataFrame"] { border: 1px solid rgba(59,130,246,0.15); border-radius: 10px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# ── 3. 股票池（371 檔，半導體/AI/衛星供應鏈）
+# ── 2. 股票池
 # ==============================================================================
 STOCK_STRING = """
-2454聯發科3035智原3443創意3661世芯-KY6526達發5269祥碩3529力旺5274信驊6643M316533晶心科
+2454聯發科3035智原3443創意3661世芯-KY6526達發5269祥碩3529力旺5274信驊6533晶心科
 2379瑞昱4919新唐2401凌陽3041揚智2363矽統8227巨有科技2388威盛3014聯陽3094聯傑3122笙泉
 3135凌航3169亞信3228金麗科3259鑫創4952凌通4968立積5272笙科5471松翰6103合邦6104創惟
 6129普誠6202盛群6229研通6233旺玖6237驊訊6243迅杰6462神盾6494九齊6679鈺太6693廣閎科
@@ -204,363 +328,244 @@ STOCK_STRING = """
 """
 
 
-def extract_stock_ids(stock_str: str) -> list[str]:
-    """
-    從股票字串提取純數字股號（4~5 位）。
-    re.ASCII 確保中文字符不被視為 word character，
-    讓 \\b 能正確識別數字與中文的邊界。
-    回傳格式：['2330', '2454', ...]（純股號，不含後綴）
-    """
-    codes = re.findall(r'\b(\d{4,5})\b', stock_str, re.ASCII)
-    seen: set[str] = set()
-    result: list[str] = []
+def extract_stock_ids(s: str) -> list[str]:
+    """提取 4~5 位數股號，re.ASCII 確保中文不干擾 \\b 邊界"""
+    codes = re.findall(r'\b(\d{4,5})\b', s, re.ASCII)
+    seen, out = set(), []
     for c in codes:
         if c not in seen:
-            seen.add(c)
-            result.append(c)
-    return result
+            seen.add(c); out.append(c)
+    return out
 
 
-# ── 預設股票池（純股號列表）
 DEFAULT_STOCK_IDS = extract_stock_ids(STOCK_STRING)
 
 # ==============================================================================
-# ── 4. FinMind API 工具函式
+# ── 3. FinMind API
 # ==============================================================================
+FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 
-FINMIND_API_URL = "https://api.finmindtrade.com/api/v4/data"
 
-
-def get_finmind_token() -> str:
-    """
-    從 Streamlit Secrets 讀取 FinMind API Token。
-    Secrets 設定方式（.streamlit/secrets.toml）：
-        [finmind]
-        token = "your_token_here"
-    """
+def get_token() -> str:
     try:
-        token = st.secrets["finmind"]["token"]
-        if not token or token == "your_token_here":
+        t = st.secrets["finmind"]["token"]
+        if not t or t == "your_token_here":
             st.error("⚠️ 請在 Streamlit Secrets 設定有效的 FinMind token！")
             st.stop()
-        return token
+        return t
     except KeyError:
-        st.error(
-            "⚠️ 找不到 FinMind token！\n\n"
-            "請在 Streamlit Cloud → App settings → Secrets 加入：\n"
-            "```toml\n[finmind]\ntoken = \"your_token_here\"\n```"
-        )
+        st.error("⚠️ 找不到 FinMind token，請至 Settings → Secrets 設定。")
         st.stop()
 
 
-def finmind_fetch_prices(
-    stock_ids: list[str],
-    start_date: str,
-    end_date: str,
-    token: str,
-) -> dict[str, pd.DataFrame]:
+def fetch_prices(ids: list[str], start: str, end: str, token: str) -> dict[str, pd.DataFrame]:
     """
-    呼叫 FinMind TaiwanStockPrice API，批次下載台股日線資料。
-
-    FinMind 優勢：
-      - 一次 API call 可帶多支股票（傳 stock_id 用逗號分隔）
-      - 實際上 FinMind 每支股票算一個 request，但回傳穩定
-      - 免費登入後 600 calls/hr，一批 60 支 = 60 calls，
-        350 支分 6 批共 360 calls，一次掃描只需約 1 分鐘
-
-    回傳：
-        dict[stock_id → pd.DataFrame(OHLCV)]
+    逐支呼叫 FinMind TaiwanStockPrice，回傳 dict[stock_id → OHLCV DataFrame]
+    每支間隔 50ms，避免限流
     """
     result: dict[str, pd.DataFrame] = {}
-    BATCH_SIZE = 60          # 每批 60 支，避免單次 payload 過大
-    MIN_ROWS   = 100         # 資料筆數門檻
+    RENAME = {
+        "date": "Date", "open": "Open",
+        "max": "High", "min": "Low",
+        "close": "Close",
+        "Trading_Volume": "Volume",
+        "trading_volume": "Volume",
+    }
+    NEED = ["Open", "High", "Low", "Close", "Volume"]
 
-    batches = [stock_ids[i:i+BATCH_SIZE]
-               for i in range(0, len(stock_ids), BATCH_SIZE)]
-
-    for batch in batches:
-        for stock_id in batch:
-            try:
-                resp = requests.get(
-                    FINMIND_API_URL,
-                    params={
-                        "dataset":    "TaiwanStockPrice",
-                        "data_id":    stock_id,
-                        "start_date": start_date,
-                        "end_date":   end_date,
-                        "token":      token,
-                    },
-                    timeout=15,
-                )
-                resp.raise_for_status()
-                payload = resp.json()
-
-                # FinMind 回傳格式：{"status": 200, "data": [...]}
-                if payload.get("status") != 200:
-                    continue
-                rows = payload.get("data", [])
-                if not rows:
-                    continue
-
-                df = pd.DataFrame(rows)
-                # FinMind 欄位名稱對應
-                rename_map = {
-                    "date":              "Date",
-                    "open":              "Open",
-                    "max":               "High",     # FinMind 用 max/min
-                    "min":               "Low",
-                    "close":             "Close",
-                    "Trading_Volume":    "Volume",
-                    "trading_volume":    "Volume",
-                    "Trading_money":     "Amount",
-                    "spread":            "Change",
-                }
-                df = df.rename(columns=rename_map)
-
-                # 確保必要欄位存在
-                required = ["Date", "Open", "High", "Low", "Close", "Volume"]
-                if not all(c in df.columns for c in required):
-                    continue
-
-                df["Date"] = pd.to_datetime(df["Date"])
-                df = df.set_index("Date").sort_index()
-                df = df[required[1:]].apply(pd.to_numeric, errors="coerce")
-                df = df.dropna(subset=["Close"])
-
-                if len(df) >= MIN_ROWS:
-                    result[stock_id] = df
-
-            except Exception:
-                # 單支失敗不中斷整批，靜默跳過
+    for sid in ids:
+        try:
+            r = requests.get(FINMIND_URL, params={
+                "dataset": "TaiwanStockPrice",
+                "data_id": sid,
+                "start_date": start,
+                "end_date": end,
+                "token": token,
+            }, timeout=15)
+            r.raise_for_status()
+            pl = r.json()
+            if pl.get("status") != 200 or not pl.get("data"):
                 continue
-
-            # 小延遲避免過於頻繁打 API（每支間隔 50ms）
-            time.sleep(0.05)
-
+            df = pd.DataFrame(pl["data"]).rename(columns=RENAME)
+            if not all(c in df.columns for c in ["Date"] + NEED):
+                continue
+            df["Date"] = pd.to_datetime(df["Date"])
+            df = df.set_index("Date").sort_index()
+            df = df[NEED].apply(pd.to_numeric, errors="coerce").dropna(subset=["Close"])
+            if len(df) >= 100:
+                result[sid] = df
+        except Exception:
+            pass
+        time.sleep(0.05)
     return result
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_fetch(ids_tuple: tuple, start: str, end: str, token: str):
+    data = fetch_prices(list(ids_tuple), start, end, token)
+    return data, len(data), len(ids_tuple) - len(data)
+
+
 # ==============================================================================
-# ── 5. 排程邏輯（台灣時間 18:00 自動觸發）
+# ── 4. 排程
 # ==============================================================================
-
-# 台股收盤 13:30，官方資料更新約 15:00~17:00，18:00 確保資料完整
-AUTO_FETCH_HOUR_TW = 18
-
-
-def get_tw_now() -> datetime:
-    """取得目前台灣時間"""
+def tw_now() -> datetime:
     return datetime.now(tz=TZ_TW)
 
 
 def should_auto_fetch() -> bool:
-    """
-    判斷是否應自動抓取資料。
-    條件：
-      1. 今日尚未抓過（session_state 中 last_fetch_date != 今天）
-      2. 目前台灣時間 >= 18:00
-      3. 今日為交易日（週一至週五；台灣國定假日無法自動偵測，略過）
-    """
-    now_tw = get_tw_now()
-
-    # 週末不自動抓（週六=5，週日=6）
-    if now_tw.weekday() >= 5:
+    n = tw_now()
+    if n.weekday() >= 5 or n.hour < 18:
         return False
-
-    # 時間未到 18:00 不抓
-    if now_tw.hour < AUTO_FETCH_HOUR_TW:
-        return False
-
-    # 今日已抓過就不重複
-    last_date = st.session_state.get("last_fetch_date")
-    if last_date == now_tw.date():
-        return False
-
-    return True
+    return st.session_state.get("last_fetch_date") != n.date()
 
 
-def next_fetch_time() -> str:
-    """計算下次自動抓取的台灣時間字串"""
-    now_tw = get_tw_now()
-    today_fetch = now_tw.replace(hour=AUTO_FETCH_HOUR_TW, minute=0, second=0, microsecond=0)
-
-    if now_tw < today_fetch and now_tw.weekday() < 5:
-        # 今天還沒到 18:00
-        return today_fetch.strftime("%Y/%m/%d %H:%M")
-    else:
-        # 找下一個工作日
-        next_day = now_tw + timedelta(days=1)
-        while next_day.weekday() >= 5:
-            next_day += timedelta(days=1)
-        return next_day.replace(
-            hour=AUTO_FETCH_HOUR_TW, minute=0, second=0, microsecond=0
-        ).strftime("%Y/%m/%d %H:%M")
+def next_fetch_str() -> str:
+    n = tw_now()
+    t6 = n.replace(hour=18, minute=0, second=0, microsecond=0)
+    if n < t6 and n.weekday() < 5:
+        return t6.strftime("%m/%d %H:%M")
+    d = n + timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d.replace(hour=18, minute=0, second=0, microsecond=0).strftime("%m/%d %H:%M")
 
 
 # ==============================================================================
-# ── 6. 快取包裝：帶 TTL 的資料下載
+# ── 5. 技術指標
 # ==============================================================================
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_finmind_data(
-    stock_ids_tuple: tuple[str, ...],
-    start_date: str,
-    end_date: str,
-    token: str,
-) -> tuple[dict, int, int]:
-    """
-    帶 st.cache_data 快取的 FinMind 下載入口。
-    TTL = 3600 秒（1 小時），同一組參數 1 小時內不重複打 API。
-
-    參數用 tuple 是因為 list 不可 hash，st.cache_data 需要可 hash 的參數。
-    token 也作為 cache key，確保換 token 時能正確失效。
-    """
-    stock_ids = list(stock_ids_tuple)
-    data_dict = finmind_fetch_prices(stock_ids, start_date, end_date, token)
-    success   = len(data_dict)
-    skipped   = len(stock_ids) - success
-    return data_dict, success, skipped
+def sma(s: pd.Series, w: int) -> pd.Series:
+    return s.rolling(w, min_periods=w).mean()
 
 
-# ==============================================================================
-# ── 7. 技術指標工具函式
-# ==============================================================================
-
-def calc_ma(series: pd.Series, window: int) -> pd.Series:
-    """簡單移動平均線（SMA）"""
-    return series.rolling(window=window, min_periods=window).mean()
-
-
-def calc_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """Average True Range（ATR）"""
+def atr(df: pd.DataFrame, w: int = 14) -> pd.Series:
     h, l, c = df["High"], df["Low"], df["Close"]
-    tr = pd.concat([
-        h - l,
-        (h - c.shift(1)).abs(),
-        (l - c.shift(1)).abs(),
-    ], axis=1).max(axis=1)
-    return tr.rolling(window=period).mean()
+    tr = pd.concat([(h - l), (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    return tr.rolling(w).mean()
 
 
 # ==============================================================================
-# ── 8. 核心篩選策略（Sidebar 參數即時生效，不加快取）
+# ── 6. 篩選策略（含條件漏斗統計）
+#
+#  新增「寬鬆模式」（strict=False）：
+#    ④ 量縮：放寬為 < vol_ratio * 1.3
+#    ⑤ 止跌轉折：今收 > 昨高  OR  今收 > MA20（MA20 站回也算）
+#
+#  同時回傳各條件通過數，方便 UI 顯示漏斗分析
 # ==============================================================================
-
-def filter_pullback_stocks(data_dict: dict, params: dict) -> pd.DataFrame:
+def run_filter(
+    data: dict[str, pd.DataFrame],
+    p: dict,
+    strict: bool = True,
+) -> tuple[pd.DataFrame, dict]:
     """
-    五重條件篩選波段拉回止跌轉折個股：
-
-    ① 長線多頭：MA50 > MA200 且 Close > MA200
-    ② 動能記憶：過去 N 天內曾創近 M 天新高
-    ③ 波段拉回：Close 與 MA20 距離在 ±X%
-    ④ 量縮洗盤：近 3 日均量 < 20 日均量 × Y
-    ⑤ 止跌轉折：今收 > 昨高
-
-    額外計算：停損價、目標價、損益比（RR）
+    回傳 (result_df, funnel_counts)
+    funnel_counts = {條件名: 通過數}
     """
+    funnel = {
+        "① 長線多頭":  0,
+        "② 動能記憶":  0,
+        "③ 波段拉回":  0,
+        "④ 量縮洗盤":  0,
+        "⑤ 止跌轉折":  0,
+    }
     results = []
 
-    for stock_id, df in data_dict.items():
+    vol_limit = p["vol_ratio"] * (1.3 if not strict else 1.0)
+
+    for sid, df in data.items():
         try:
             if len(df) < 210:
                 continue
+            df = df.copy().sort_index()
+            c, h, l, v = df["Close"], df["High"], df["Low"], df["Volume"]
 
-            df  = df.copy().sort_index()
-            c   = df["Close"]
-            h   = df["High"]
-            l   = df["Low"]
-            v   = df["Volume"]
+            ma20_s  = sma(c, 20)
+            ma50_s  = sma(c, 50)
+            ma200_s = sma(c, 200)
+            atr14   = atr(df, 14)
 
-            # ── 均線 ──
-            ma20  = calc_ma(c, 20)
-            ma50  = calc_ma(c, 50)
-            ma200 = calc_ma(c, 200)
-            atr14 = calc_atr(df, 14)
-
-            # ── 最後一根 K 棒資料 ──
-            c0       = c.iloc[-1]       # 今日收盤
-            c1       = c.iloc[-2]       # 昨日收盤
-            h1       = h.iloc[-2]       # 昨日最高（止跌判斷用）
-            ma20_0   = ma20.iloc[-1]
-            ma50_0   = ma50.iloc[-1]
-            ma200_0  = ma200.iloc[-1]
-            atr_0    = atr14.iloc[-1]
+            c0, c1    = c.iloc[-1], c.iloc[-2]
+            h0, h1    = h.iloc[-1], h.iloc[-2]
+            ma20_0    = ma20_s.iloc[-1]
+            ma50_0    = ma50_s.iloc[-1]
+            ma200_0   = ma200_s.iloc[-1]
+            atr_0     = atr14.iloc[-1]
 
             if any(pd.isna([c0, c1, h1, ma20_0, ma50_0, ma200_0, atr_0])):
                 continue
 
-            # ── ① 長線多頭 ──
+            # ① 長線多頭
             if not (ma50_0 > ma200_0 and c0 > ma200_0):
                 continue
+            funnel["① 長線多頭"] += 1
 
-            # ── ② 動能記憶（過去 N 天內曾創近 M 天新高）──
-            n = params["momentum_days"]
-            m = params["high_window"]
-            past_close   = c.iloc[-(n+1):-1]
-            rolling_high = h.rolling(m).max().iloc[-(n+1):-1]
-            if not (past_close >= rolling_high).any():
+            # ② 動能記憶
+            N, M = p["momentum_days"], p["high_window"]
+            hi_roll = h.rolling(M).max().iloc[-(N+1):-1]
+            cl_look = c.iloc[-(N+1):-1]
+            if not (cl_look >= hi_roll).any():
                 continue
+            funnel["② 動能記憶"] += 1
 
-            # ── ③ 波段拉回（Close ≈ MA20 ± X%）──
-            dist_pct = (c0 - ma20_0) / ma20_0 * 100
-            if abs(dist_pct) > params["pullback_pct"]:
+            # ③ 波段拉回
+            dist = (c0 - ma20_0) / ma20_0 * 100
+            if abs(dist) > p["pullback_pct"]:
                 continue
+            funnel["③ 波段拉回"] += 1
 
-            # ── ④ 量縮洗盤 ──
-            vol3  = v.iloc[-4:-1].mean()    # 近 3 日（不含今日）
-            vol20 = v.iloc[-21:-1].mean()   # 近 20 日
-            if pd.isna(vol3) or pd.isna(vol20) or vol20 == 0:
+            # ④ 量縮洗盤
+            v3  = v.iloc[-4:-1].mean()
+            v20 = v.iloc[-21:-1].mean()
+            if pd.isna(v3) or pd.isna(v20) or v20 == 0:
                 continue
-            vol_shrink = vol3 / vol20
-            if vol_shrink >= params["vol_ratio"]:
+            vs = v3 / v20
+            if vs >= vol_limit:
                 continue
+            funnel["④ 量縮洗盤"] += 1
 
-            # ── ⑤ 止跌轉折（今收 > 昨高）──
-            if c0 <= h1:
+            # ⑤ 止跌轉折
+            # 嚴格：今收 > 昨高
+            # 寬鬆：今收 > 昨高  OR  今收站回 MA20（今收 > MA20 且昨收 < MA20）
+            ma20_1 = ma20_s.iloc[-2] if len(ma20_s) >= 2 else np.nan
+            reversal_strict = (c0 > h1)
+            reversal_loose  = reversal_strict or (
+                not pd.isna(ma20_1) and c0 > ma20_0 and c1 < ma20_1
+            )
+            passed_reversal = reversal_strict if strict else reversal_loose
+            if not passed_reversal:
                 continue
+            funnel["⑤ 止跌轉折"] += 1
 
-            # ── 第一波拉回偵測（近 10 日觸發次數）──
-            first_pullback = True
+            # 第一波拉回
+            first = True
             for i in range(2, 12):
-                if i + 1 > len(c):
-                    break
-                ci    = c.iloc[-i]
-                hi1   = h.iloc[-(i+1)]
-                ma20i = ma20.iloc[-i]
-                if pd.isna([ci, hi1, ma20i]).any():
-                    continue
-                if abs((ci - ma20i) / ma20i * 100) <= params["pullback_pct"] and ci > hi1:
-                    first_pullback = False
-                    break
+                if i + 1 > len(c): break
+                ci = c.iloc[-i]; hi1 = h.iloc[-(i+1)]; m20i = ma20_s.iloc[-i]
+                if pd.isna([ci, hi1, m20i]).any(): continue
+                if abs((ci - m20i) / m20i * 100) <= p["pullback_pct"] and ci > hi1:
+                    first = False; break
 
-            # ── 風險收益計算 ──
-            recent_low  = min(l.iloc[-1], l.iloc[-2])
-            stop_atr    = c0 - 1.5 * atr_0
-            stop_pct    = recent_low * 0.98
-            stop_loss   = min(max(stop_atr, stop_pct), c0 * 0.95)
-
-            prev_high   = h.iloc[-m:].max()
-            target      = max(c0 * 1.20, prev_high * 1.02)
-
-            risk        = c0 - stop_loss
-            reward      = target - c0
-            rr          = reward / risk if risk > 0 else 0.0
-
-            if rr < params["min_rr"]:
+            # 風險收益
+            rl       = min(l.iloc[-1], l.iloc[-2])
+            stop     = min(max(c0 - 1.5*atr_0, rl*0.98), c0*0.95)
+            target   = max(c0*1.20, h.iloc[-M:].max()*1.02)
+            risk     = c0 - stop
+            reward   = target - c0
+            rr       = round(reward/risk, 2) if risk > 0 else 0.0
+            if rr < p["min_rr"]:
                 continue
-
-            chg_pct = (c0 - c1) / c1 * 100 if c1 != 0 else 0.0
 
             results.append({
-                "代號":        stock_id,
+                "代號":        sid,
                 "收盤價":      round(c0, 2),
-                "漲跌幅(%)":   round(chg_pct, 2),
-                "拉回深度(%)": round(dist_pct, 2),
-                "量縮比":      round(vol_shrink, 2),
-                "停損價":      round(stop_loss, 2),
+                "漲跌幅(%)":   round((c0-c1)/c1*100, 2) if c1 else 0,
+                "拉回深度(%)": round(dist, 2),
+                "量縮比":      round(vs, 2),
+                "停損價":      round(stop, 2),
                 "目標價":      round(target, 2),
-                "損益比(RR)":  round(rr, 2),
-                "首波拉回":    "✅" if first_pullback else "—",
+                "損益比(RR)":  rr,
+                "首波拉回":    "✅" if first else "—",
                 "MA20":        round(ma20_0, 2),
                 "MA50":        round(ma50_0, 2),
                 "MA200":       round(ma200_0, 2),
@@ -569,343 +574,289 @@ def filter_pullback_stocks(data_dict: dict, params: dict) -> pd.DataFrame:
         except Exception:
             continue
 
-    if not results:
-        return pd.DataFrame()
-
     df_out = pd.DataFrame(results)
-    return df_out.sort_values("損益比(RR)", ascending=False).reset_index(drop=True)
+    if not df_out.empty:
+        df_out = df_out.sort_values("損益比(RR)", ascending=False).reset_index(drop=True)
+    return df_out, funnel
 
 
 # ==============================================================================
-# ── 9. Plotly K 線圖（Candlestick + Volume + MA 均線）
+# ── 7. K 線圖
 # ==============================================================================
-
-def plot_candlestick(df: pd.DataFrame, stock_id: str) -> go.Figure:
-    """
-    繪製精美 K 線圖：
-    - 台股紅漲綠跌配色
-    - MA20（橙）、MA50（藍）、MA200（紅虛線）
-    - Volume 子圖
-    - Rangeslider
-    """
+def kline(df: pd.DataFrame, sid: str) -> go.Figure:
     df = df.copy().sort_index().tail(250)
-    df["MA20"]  = calc_ma(df["Close"], 20)
-    df["MA50"]  = calc_ma(df["Close"], 50)
-    df["MA200"] = calc_ma(df["Close"], 200)
+    df["MA20"]  = sma(df["Close"], 20)
+    df["MA50"]  = sma(df["Close"], 50)
+    df["MA200"] = sma(df["Close"], 200)
 
-    # K 棒顏色（台股：收 >= 開 = 紅；收 < 開 = 綠）
-    bar_colors = [
-        "#ef4444" if row["Close"] >= row["Open"] else "#22c55e"
-        for _, row in df.iterrows()
-    ]
+    colors = ["#ef4444" if r["Close"] >= r["Open"] else "#22c55e" for _, r in df.iterrows()]
 
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.04,
-        row_heights=[0.72, 0.28],
-        subplot_titles=(f"{stock_id} — K 線與均線", "成交量"),
-    )
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        vertical_spacing=0.03, row_heights=[0.72, 0.28],
+                        subplot_titles=(f"{sid}  K線 + 均線", "成交量"))
 
-    # K 線
     fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df["Open"], high=df["High"],
-        low=df["Low"],   close=df["Close"],
+        x=df.index, open=df["Open"], high=df["High"],
+        low=df["Low"], close=df["Close"],
         increasing_line_color="#ef4444", increasing_fillcolor="#ef4444",
         decreasing_line_color="#22c55e", decreasing_fillcolor="#22c55e",
         name="K線", line=dict(width=1),
     ), row=1, col=1)
 
-    # MA20 橙線
-    fig.add_trace(go.Scatter(
-        x=df.index, y=df["MA20"],
-        line=dict(color="#fb923c", width=1.5),
-        name="MA20",
-    ), row=1, col=1)
+    for col_name, clr, w, dash in [
+        ("MA20", "#fb923c", 1.5, "solid"),
+        ("MA50", "#60a5fa", 1.8, "solid"),
+        ("MA200","#f43f5e", 2.0, "dot"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df[col_name],
+            line=dict(color=clr, width=w, dash=dash),
+            name=col_name,
+        ), row=1, col=1)
 
-    # MA50 藍線
-    fig.add_trace(go.Scatter(
-        x=df.index, y=df["MA50"],
-        line=dict(color="#60a5fa", width=1.8),
-        name="MA50",
-    ), row=1, col=1)
-
-    # MA200 紅虛線
-    fig.add_trace(go.Scatter(
-        x=df.index, y=df["MA200"],
-        line=dict(color="#f43f5e", width=2, dash="dot"),
-        name="MA200",
-    ), row=1, col=1)
-
-    # 成交量
-    fig.add_trace(go.Bar(
-        x=df.index, y=df["Volume"],
-        marker_color=bar_colors,
-        name="成交量", opacity=0.75,
-    ), row=2, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df["Volume"],
+                         marker_color=colors, name="量", opacity=0.72), row=2, col=1)
 
     fig.update_layout(
-        height=600,
-        paper_bgcolor="#0d1526",
-        plot_bgcolor="#0d1526",
+        height=580, paper_bgcolor="#0a0e1a", plot_bgcolor="#0a0e1a",
         font=dict(color="#94a3b8", size=11, family="Noto Sans TC"),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02,
-            xanchor="right", x=1,
-            bgcolor="rgba(13,21,38,0.8)",
-        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1, bgcolor="rgba(10,14,26,0.8)"),
         xaxis_rangeslider_visible=True,
-        xaxis_rangeslider=dict(
-            bgcolor="#0a0e1a",
-            bordercolor="rgba(59,130,246,0.2)",
-            thickness=0.04,
-        ),
-        margin=dict(l=10, r=10, t=40, b=10),
+        xaxis_rangeslider=dict(bgcolor="#0a0e1a",
+                               bordercolor="rgba(59,130,246,0.2)", thickness=0.04),
+        margin=dict(l=8, r=8, t=38, b=8),
     )
-    fig.update_xaxes(gridcolor="rgba(59,130,246,0.08)", linecolor="rgba(59,130,246,0.2)")
-    fig.update_yaxes(gridcolor="rgba(59,130,246,0.08)", linecolor="rgba(59,130,246,0.2)")
+    fig.update_xaxes(gridcolor="rgba(59,130,246,0.07)", linecolor="rgba(59,130,246,0.2)")
+    fig.update_yaxes(gridcolor="rgba(59,130,246,0.07)", linecolor="rgba(59,130,246,0.2)")
     for ann in fig.layout.annotations:
-        ann.font.color = "#64748b"
-        ann.font.size  = 11
-
+        ann.font.update(color="#64748b", size=11)
     return fig
 
 
 # ==============================================================================
-# ── 10. 主程式 UI
+# ── 8. 資料抓取包裝
 # ==============================================================================
-
-def do_fetch(stock_ids: list[str], token: str) -> tuple[dict, int, int]:
-    """
-    執行實際資料抓取並更新 session_state。
-    供「手動掃描」按鈕與「自動排程」共用。
-    """
-    now_tw    = get_tw_now()
-    end_dt    = now_tw.strftime("%Y-%m-%d")
-    start_dt  = (now_tw - timedelta(days=430)).strftime("%Y-%m-%d")  # 確保 MA200 足夠
-
-    data_dict, success, skipped = load_finmind_data(
-        stock_ids_tuple=tuple(stock_ids),
-        start_date=start_dt,
-        end_date=end_dt,
-        token=token,
-    )
-
-    # 更新 session_state
-    st.session_state["data_dict"]       = data_dict
-    st.session_state["success_cnt"]     = success
-    st.session_state["skip_cnt"]        = skipped
-    st.session_state["last_fetch_date"] = now_tw.date()
-    st.session_state["last_fetch_time"] = now_tw.strftime("%Y/%m/%d %H:%M:%S")
-
-    return data_dict, success, skipped
+def do_fetch(ids: list[str], token: str):
+    n    = tw_now()
+    end  = n.strftime("%Y-%m-%d")
+    start = (n - timedelta(days=430)).strftime("%Y-%m-%d")
+    data, ok, skip = cached_fetch(tuple(ids), start, end, token)
+    st.session_state.update({
+        "data_dict":       data,
+        "success_cnt":     ok,
+        "skip_cnt":        skip,
+        "last_fetch_date": n.date(),
+        "last_fetch_time": n.strftime("%Y/%m/%d %H:%M"),
+    })
+    return data, ok, skip
 
 
+# ==============================================================================
+# ── 9. 主程式
+# ==============================================================================
 def main():
-    # ── Token（從 Secrets 讀取）──
-    token = get_finmind_token()
+    token    = get_token()
+    has_data = bool(st.session_state.get("data_dict"))
 
-    # ── 自動排程觸發（無需使用者操作）──
+    # ── 自動排程 ──
     if should_auto_fetch():
-        with st.spinner("⏰ 排程自動抓取中（台灣時間 18:00）..."):
-            default_ids = extract_stock_ids(STOCK_STRING)
-            do_fetch(default_ids, token)
+        with st.spinner("⏰ 18:00 自動抓取中..."):
+            do_fetch(DEFAULT_STOCK_IDS, token)
         st.toast("✅ 排程自動抓取完成！", icon="🕕")
+        has_data = True
 
-    # ─────────────────────────────────────────────────────────────────────
-    # ── 標題 ──
-    # ─────────────────────────────────────────────────────────────────────
+    # ════════════════════════════════════════════════
+    # 標題
+    # ════════════════════════════════════════════════
     st.markdown("""
     <div class="hero-header">
-        <p class="hero-title">📡 台股波段拉回選股系統 v3</p>
+        <p class="hero-title">📡 台股波段拉回選股系統</p>
         <p class="hero-subtitle">
-            半導體 · AI · 衛星通訊完整供應鏈
-            ｜FinMind 台股專屬資料
-            ｜每日 18:00 自動更新 · 手動掃描隨時可用
+            半導體 · AI · 衛星通訊供應鏈 ｜ FinMind 台股資料
+            ｜ 每日 18:00 自動更新
         </p>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
 
-    # ── 排程狀態資訊 ──
-    now_tw     = get_tw_now()
-    last_time  = st.session_state.get("last_fetch_time", "尚未抓取")
-    next_time  = next_fetch_time()
-    has_data   = "data_dict" in st.session_state and st.session_state["data_dict"]
-
-    col_s1, col_s2, col_s3 = st.columns(3)
-    with col_s1:
-        st.markdown(f"""
-        <div class="schedule-card">
-            <div class="label">🕐 台灣現在時間</div>
-            <div class="value">{now_tw.strftime("%Y/%m/%d %H:%M:%S")}</div>
+    # 排程狀態列
+    n_tw      = tw_now()
+    last_time = st.session_state.get("last_fetch_time", "尚未抓取")
+    sc1, sc2, sc3 = st.columns(3)
+    with sc1:
+        st.markdown(f"""<div class="sched-card">
+            <div class="sched-lbl">🕐 台灣時間</div>
+            <div class="sched-val">{n_tw.strftime("%Y/%m/%d %H:%M:%S")}</div>
         </div>""", unsafe_allow_html=True)
-    with col_s2:
-        st.markdown(f"""
-        <div class="schedule-card">
-            <div class="label">✅ 上次抓取時間</div>
-            <div class="value highlight">{last_time}</div>
+    with sc2:
+        st.markdown(f"""<div class="sched-card">
+            <div class="sched-lbl">✅ 上次抓取</div>
+            <div class="sched-val green">{last_time}</div>
         </div>""", unsafe_allow_html=True)
-    with col_s3:
-        st.markdown(f"""
-        <div class="schedule-card warn">
-            <div class="label">⏰ 下次自動抓取</div>
-            <div class="value warn-text">{next_time} (台灣時間)</div>
+    with sc3:
+        st.markdown(f"""<div class="sched-card warn">
+            <div class="sched-lbl">⏰ 下次自動抓取</div>
+            <div class="sched-val amber">{next_fetch_str()} 台灣時間</div>
         </div>""", unsafe_allow_html=True)
 
-    # ── 策略說明 ──
-    st.markdown("""
-    <div class="strategy-info">
-        🎯 <strong>策略核心：</strong>在多頭趨勢中，篩選已有強勢動能、正在拉回整理、出現量縮止跌轉折訊號的個股。<br>
-        📌 <strong>①長線多頭</strong>（MA50>MA200，Close>MA200）→
-        <strong>②動能記憶</strong>（近期曾創新高）→
-        <strong>③波段拉回</strong>（Close≈MA20）→
-        <strong>④量縮洗盤</strong>（近3日量&lt;20日量×門檻）→
-        <strong>⑤止跌轉折</strong>（今收>昨高）
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
-    # ═════════════════════════════════════════════════════════════════════
-    # ── SIDEBAR ──
-    # ═════════════════════════════════════════════════════════════════════
+    # 策略說明
+    st.markdown("""<div class="strat-info">
+        🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
+        <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
+        <strong>②動能記憶</strong>（近期曾創N日新高）→
+        <strong>③波段拉回</strong>（Close≈MA20 ±X%）→
+        <strong>④量縮洗盤</strong>（近3日量&lt;20日量×Y）→
+        <strong>⑤止跌轉折</strong>（今收>昨高 或 站回MA20）
+    </div>""", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════
+    # SIDEBAR
+    # ════════════════════════════════════════════════
     with st.sidebar:
         st.markdown("### ⚙️ 策略參數")
+
+        strict_mode = st.toggle("嚴格模式", value=True,
+            help="關閉後：量縮放寬×1.3；止跌轉折多接受『今收站回MA20』")
+        st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 多接受MA20站回 + 量縮放寬")
+        st.divider()
 
         st.markdown("**① 長線多頭**")
         st.caption("MA50 > MA200 且 Close > MA200（固定）")
         st.divider()
 
         st.markdown("**② 動能記憶**")
-        momentum_days = st.slider("回看天數 N", 5, 60, 25, 5,
-                                  help="過去 N 個交易日內需曾觸及近期高點")
+        momentum_days = st.slider("回看天數 N", 5, 60, 25, 5)
         high_window   = st.slider("新高窗口 M（天）", 20, 120, 60, 5)
         st.divider()
 
-        st.markdown("**③ 波段拉回幅度**")
-        pullback_pct  = st.slider("Close 與 MA20 距離 ±%", 0.5, 8.0, 2.5, 0.5)
+        st.markdown("**③ 波段拉回**")
+        pullback_pct = st.slider("Close 與 MA20 距離 ±%", 0.5, 10.0, 5.0, 0.5,
+            help="預設放寬至 ±5%，可篩出更多拉回中個股")
         st.divider()
 
         st.markdown("**④ 量縮比例**")
-        vol_ratio     = st.slider("近3日量 < 20日量 × Y", 0.3, 1.0, 0.75, 0.05)
+        vol_ratio = st.slider("近3日量 / 20日量 < Y", 0.3, 1.5, 1.0, 0.05,
+            help="預設放寬至 1.0（量不放大即可）；寬鬆模式下再×1.3")
         st.divider()
 
-        st.markdown("**⑤ 最低損益比**")
-        min_rr        = st.slider("RR 門檻", 1.0, 5.0, 2.0, 0.5)
+        st.markdown("**⑤ 損益比門檻**")
+        min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5)
         st.divider()
 
-        # ── 股票池編輯 ──
         st.markdown("### 📋 股票池")
-        default_codes_str = "\n".join(DEFAULT_STOCK_IDS)
-        user_input = st.text_area(
-            "股號清單（每行一個）",
-            value=default_codes_str,
-            height=180,
-            help="4~5 位數股號，每行一個",
-        )
-        user_ids = re.findall(r'\b(\d{4,5})\b', user_input, re.ASCII)
-        # 去重保持順序
-        seen_ids: set[str] = set()
-        unique_ids: list[str] = []
-        for uid in user_ids:
-            if uid not in seen_ids:
-                seen_ids.add(uid)
-                unique_ids.append(uid)
-        user_stock_ids = unique_ids
-
-        st.caption(f"已設定 **{len(user_stock_ids)}** 檔股票")
+        user_input = st.text_area("股號（每行一個）",
+                                   value="\n".join(DEFAULT_STOCK_IDS), height=180)
+        raw_ids = re.findall(r'\b(\d{4,5})\b', user_input, re.ASCII)
+        seen_s: set[str] = set()
+        user_ids: list[str] = []
+        for x in raw_ids:
+            if x not in seen_s:
+                seen_s.add(x); user_ids.append(x)
+        st.caption(f"已設定 **{len(user_ids)}** 檔股票")
         st.divider()
 
-        # ── 掃描模式 ──
-        st.markdown("### 🔄 模式")
-        scan_mode = st.radio(
-            "選擇",
-            ["手動掃描（重新抓取資料）", "即時篩選（使用已載入資料）"],
-            index=0,
-        )
+        # ── 抓取按鈕（唯一會打 FinMind 的地方）──
+        run_btn = st.button("🚀 抓取最新資料", type="primary", use_container_width=True,
+                            help="點一次即可，資料會記憶在本頁。調整參數不需再按此按鈕。")
 
-        # ── 手動掃描按鈕 ──
-        run_btn = st.button("🚀 立即掃描", type="primary", use_container_width=True)
-
-        # ── FinMind 資料說明 ──
-        st.divider()
-        st.markdown("### ℹ️ 資料來源")
-        st.caption("FinMind TaiwanStockPrice\nToken 已安全存於 Streamlit Secrets")
-        st.caption(f"免費方案上限：600 calls/hr\n掃描 {len(user_stock_ids)} 檔需約 {len(user_stock_ids)} calls")
-        remaining = max(0, 600 - len(user_stock_ids))
-        st.progress(
-            min(len(user_stock_ids) / 600, 1.0),
-            text=f"預估使用 {len(user_stock_ids)}/600 calls",
-        )
-
-    # ═════════════════════════════════════════════════════════════════════
-    # ── 主頁面邏輯
-    # ═════════════════════════════════════════════════════════════════════
-
-    params = {
-        "momentum_days": momentum_days,
-        "high_window":   high_window,
-        "pullback_pct":  pullback_pct,
-        "vol_ratio":     vol_ratio,
-        "min_rr":        min_rr,
-    }
-
-    # 觸發條件：手動按鈕 或 即時篩選模式（已有資料）
-    should_scan = (
-        run_btn or
-        (scan_mode == "即時篩選（使用已載入資料）" and has_data)
-    )
-
-    if should_scan:
-        # ── 資料抓取或沿用快取 ──
-        if run_btn or not has_data:
-            progress_bar = st.progress(0, text="⏳ 正在從 FinMind 抓取資料（約 1~2 分鐘）...")
-            with st.spinner(""):
-                data_dict, success_cnt, skip_cnt = do_fetch(user_stock_ids, token)
-            progress_bar.progress(70, text="✅ 資料抓取完成，套用選股策略中...")
+        # 資料狀態顯示
+        if has_data:
+            fetch_time = st.session_state.get("last_fetch_time", "")
+            fetch_cnt  = st.session_state.get("success_cnt", 0)
+            st.success(f"✅ 資料已載入 {fetch_cnt} 檔\n{fetch_time}")
+            st.caption("⬆️ 調整上方參數即可即時重新篩選，不消耗 API")
         else:
-            data_dict   = st.session_state["data_dict"]
-            success_cnt = st.session_state["success_cnt"]
-            skip_cnt    = st.session_state["skip_cnt"]
-            progress_bar = st.empty()
+            st.warning("尚無資料，請先按上方按鈕抓取")
 
-        # ── 套用策略篩選 ──
-        with st.spinner("🔍 篩選中..."):
-            result_df = filter_pullback_stocks(data_dict, params)
+        st.divider()
+        st.markdown("### ℹ️ FinMind")
+        st.caption("Token 存於 Streamlit Secrets")
+        used = len(user_ids)
+        st.progress(min(used/600, 1.0), text=f"每次抓取消耗 {used}/600 calls")
 
-        try:
-            progress_bar.empty()
-        except Exception:
-            pass
+    # ════════════════════════════════════════════════
+    # 主頁面邏輯
+    # 核心架構：「抓資料」與「篩選」完全分離
+    #
+    #  ┌─ run_btn 按下 ─────────────────────────────┐
+    #  │  呼叫 FinMind API（唯一消耗 token 的地方）  │
+    #  │  結果存入 st.session_state["data_dict"]     │
+    #  └────────────────────────────────────────────┘
+    #           ↓ 資料存活於整個 session
+    #  ┌─ 每次頁面 rerun（含滑動 Slider）───────────┐
+    #  │  直接從 session_state 取資料               │
+    #  │  重跑 run_filter()（純本地運算，<1秒）      │
+    #  │  完全不碰 FinMind                          │
+    #  └────────────────────────────────────────────┘
+    # ════════════════════════════════════════════════
+    params = dict(momentum_days=momentum_days, high_window=high_window,
+                  pullback_pct=pullback_pct, vol_ratio=vol_ratio, min_rr=min_rr)
+
+    # Step A：有按「抓取」按鈕 → 打 FinMind，存入 session_state
+    if run_btn:
+        pb = st.progress(0, text="⏳ 從 FinMind 抓取資料中（約 1~2 分鐘，之後調參數不需再抓）...")
+        with st.spinner(""):
+            data, ok, skip = do_fetch(user_ids, token)
+        pb.progress(100, text=f"✅ 載入 {ok} 檔完成！調整左側參數即可即時篩選。")
+        has_data = True
+        time.sleep(0.8)
+        pb.empty()
+
+    # Step B：有資料就永遠顯示篩選結果（不管有沒有按按鈕）
+    if has_data:
+        data = st.session_state["data_dict"]
+        ok   = st.session_state["success_cnt"]
+        skip = st.session_state["skip_cnt"]
+
+        # 篩選（純本地運算，每次 rerun 都跑，< 1 秒，不打 API）
+        result_df, funnel = run_filter(data, params, strict=strict_mode)
 
         # ── 指標卡片 ──
-        m1, m2, m3, m4 = st.columns(4)
-        with m1: st.metric("📊 掃描股票", f"{len(data_dict):,} 檔")
-        with m2: st.metric("✅ 成功載入", f"{success_cnt:,} 檔")
-        with m3: st.metric("⏭️ 無資料",   f"{skip_cnt:,} 檔")
-        with m4: st.metric("🎯 符合條件", f"{len(result_df):,} 檔",
-                            delta=f"RR ≥ {min_rr}" if len(result_df) > 0 else None)
+        k1, k2, k3, k4 = st.columns(4)
+        with k1: st.metric("📊 已載入", f"{ok:,} 檔")
+        with k2: st.metric("⏭️ 無資料", f"{skip:,} 檔")
+        with k3: st.metric("🔓 篩選模式", "嚴格" if strict_mode else "寬鬆")
+        with k4: st.metric("🎯 符合條件", f"{len(result_df):,} 檔",
+                            delta=f"RR≥{min_rr}" if len(result_df) else None)
+
+        st.divider()
+
+        # ── 條件漏斗分析 ──
+        st.markdown("#### 🔬 條件漏斗分析（各條件通過數，幫助你找到調參瓶頸）")
+        total = len(data)
+        fcols = st.columns(5)
+        for i, (cname, cnt) in enumerate(funnel.items()):
+            pct = cnt/total*100 if total else 0
+            with fcols[i]:
+                st.metric(cname, f"{cnt} 檔", delta=f"{pct:.1f}%")
+
+        bottleneck = min(funnel, key=funnel.get)
+        bn_cnt = funnel[bottleneck]
+        if bn_cnt < 5:
+            st.info(
+                f"💡 **瓶頸：{bottleneck}**（僅 {bn_cnt} 檔通過）"
+                f" → 建議{'切換寬鬆模式' if strict_mode else '放寬該條件參數'}"
+            )
 
         st.divider()
 
         # ── 結果表格 ──
         if result_df.empty:
-            st.warning("⚠️ 目前沒有符合所有條件的個股，請嘗試放寬參數。")
+            st.warning("⚠️ 無符合個股。請看上方漏斗找瓶頸，或切換寬鬆模式。")
         else:
-            st.markdown(f"### 📋 篩選結果 — 共 {len(result_df)} 檔（依損益比降序）")
-
-            disp_cols = ["代號", "收盤價", "漲跌幅(%)", "拉回深度(%)",
-                         "量縮比", "停損價", "目標價", "損益比(RR)", "首波拉回"]
+            st.markdown(f"### 📋 篩選結果 — {len(result_df)} 檔（依 RR 降序）")
+            disp = ["代號","收盤價","漲跌幅(%)","拉回深度(%)","量縮比","停損價","目標價","損益比(RR)","首波拉回"]
             st.dataframe(
-                result_df[disp_cols],
+                result_df[disp],
                 use_container_width=True,
-                height=min(600, 45 + 38 * len(result_df)),
+                height=min(580, 45 + 38*len(result_df)),
                 column_config={
                     "代號":        st.column_config.TextColumn("代號", width="small"),
-                    "收盤價":      st.column_config.NumberColumn("收盤價", format="%.2f"),
-                    "漲跌幅(%)":   st.column_config.NumberColumn("漲跌幅", format="%.2f%%"),
-                    "拉回深度(%)": st.column_config.NumberColumn("拉回深度", format="%.2f%%"),
-                    "量縮比":      st.column_config.ProgressColumn(
-                                        "量縮比", min_value=0, max_value=1, format="%.2f"),
+                    "收盤價":      st.column_config.NumberColumn("收盤", format="%.2f"),
+                    "漲跌幅(%)":   st.column_config.NumberColumn("漲跌", format="%.2f%%"),
+                    "拉回深度(%)": st.column_config.NumberColumn("拉回", format="%.2f%%"),
+                    "量縮比":      st.column_config.ProgressColumn("量縮比", min_value=0, max_value=1.5, format="%.2f"),
                     "停損價":      st.column_config.NumberColumn("停損", format="%.2f"),
                     "目標價":      st.column_config.NumberColumn("目標", format="%.2f"),
                     "損益比(RR)":  st.column_config.NumberColumn("RR", format="%.2f"),
@@ -914,112 +865,51 @@ def main():
                 hide_index=True,
             )
 
-            # ── CSV 下載 ──
             buf = io.StringIO()
             result_df.to_csv(buf, index=False, encoding="utf-8-sig")
-            st.download_button(
-                "⬇️ 下載 CSV",
-                data=buf.getvalue(),
-                file_name=f"pullback_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv",
-            )
+            st.download_button("⬇️ 下載 CSV", buf.getvalue(),
+                               f"pullback_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                               mime="text/csv")
 
             st.divider()
 
             # ── K 線圖 ──
             st.markdown("### 📈 個股 K 線圖")
-            label_opts = [
-                f"{row['代號']}  RR={row['損益比(RR)']}  收={row['收盤價']}"
-                for _, row in result_df.iterrows()
-            ]
-            sel_label = st.selectbox("選擇個股", label_opts, index=0)
-            sel_idx   = label_opts.index(sel_label)
-            sel_id    = result_df.iloc[sel_idx]["代號"]
+            opts = [f"{r['代號']}  RR={r['損益比(RR)']}  收={r['收盤價']}"
+                    for _, r in result_df.iterrows()]
+            sel = st.selectbox("選擇個股", opts, index=0)
+            idx = opts.index(sel)
+            sid = result_df.iloc[idx]["代號"]
 
-            if sel_id in data_dict:
-                fig = plot_candlestick(data_dict[sel_id], sel_id)
-                st.plotly_chart(fig, use_container_width=True)
-
-                row = result_df.iloc[sel_idx]
+            if sid in data:
+                st.plotly_chart(kline(data[sid], sid), use_container_width=True)
+                row = result_df.iloc[idx]
                 ka, kb, kc, kd = st.columns(4)
-                with ka: st.metric("收盤價",  f"${row['收盤價']:.2f}",
-                                   delta=f"{row['漲跌幅(%)']:.2f}%")
-                with kb: st.metric("建議停損", f"${row['停損價']:.2f}")
-                with kc: st.metric("預估目標", f"${row['目標價']:.2f}")
-                with kd: st.metric("損益比 RR", f"{row['損益比(RR)']:.2f}x")
+                with ka: st.metric("收盤", f"${row['收盤價']:.2f}", delta=f"{row['漲跌幅(%)']:.2f}%")
+                with kb: st.metric("停損", f"${row['停損價']:.2f}")
+                with kc: st.metric("目標", f"${row['目標價']:.2f}")
+                with kd: st.metric("RR",  f"{row['損益比(RR)']:.2f}x")
 
     else:
-        # ── 未掃描時的歡迎畫面 ──
-        if has_data:
-            last = st.session_state.get("last_fetch_time", "")
-            st.info(f"📦 已有快取資料（{last}），可選擇「即時篩選」模式直接使用，或按「立即掃描」重新抓取。")
-        else:
-            st.info("👈 請點擊左側「🚀 立即掃描」開始抓取資料並篩選個股。\n\n每日 18:00（台灣時間）也會自動抓取最新資料。")
-
+        # 尚無資料
+        st.info("👈 點擊左側「🚀 抓取最新資料」開始，或等待每日 18:00 自動抓取。\n\n"
+                "**資料載入一次後，調整任何篩選參數都不會再消耗 FinMind API。**")
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown(f"""
-            | 參數 | 值 |
-            |---|---|
-            | 動能回看 N | **{momentum_days}** 天 |
-            | 新高窗口 M | **{high_window}** 天 |
-            | 拉回幅度 | **±{pullback_pct}%** |
-            """)
+            st.markdown(f"| 參數 | 值 |\n|---|---|\n"
+                        f"| 動能回看 N | **{momentum_days}** 天 |\n"
+                        f"| 新高窗口 M | **{high_window}** 天 |\n"
+                        f"| 拉回幅度 | **±{pullback_pct}%** |")
         with c2:
-            st.markdown(f"""
-            | 參數 | 值 |
-            |---|---|
-            | 量縮比 Y | **{vol_ratio}** |
-            | 最低 RR | **{min_rr}x** |
-            | 股票池 | **{len(user_stock_ids)}** 檔 |
-            """)
+            st.markdown(f"| 參數 | 值 |\n|---|---|\n"
+                        f"| 量縮比 Y | **{vol_ratio}** |\n"
+                        f"| 最低 RR | **{min_rr}x** |\n"
+                        f"| 股票池 | **{len(user_ids)}** 檔 |")
 
-    # ── 風險提醒 ──
-    st.markdown("""
-    <div class="risk-warning">
-        ⚠️ <strong>風險提醒：</strong>本系統僅供技術分析參考，不構成任何投資建議。
-        股市投資有風險，過去績效不代表未來表現。請依個人風險承受能力自行判斷，並嚴格執行停損紀律。
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div class="risk-warn">
+        ⚠️ 本系統僅供技術分析參考，不構成投資建議。股市有風險，請嚴格執行停損。
+    </div>""", unsafe_allow_html=True)
 
 
-# ==============================================================================
-# ── 11. 程式進入點
-# ==============================================================================
 if __name__ == "__main__":
     main()
-
-
-# ==============================================================================
-# ── APPENDIX：部署說明
-# ==============================================================================
-#
-# ── requirements.txt ──
-#   streamlit>=1.35.0
-#   pandas>=2.1.0
-#   numpy>=1.26.0
-#   plotly>=5.20.0
-#   requests>=2.31.0
-#   (不需要 yfinance)
-#
-# ── Streamlit Secrets 設定（最重要！）──
-#   在 Streamlit Cloud → 你的 App → Settings → Secrets 貼上：
-#
-#   [finmind]
-#   token = "你的 FinMind Token"
-#
-#   本地測試則建立 .streamlit/secrets.toml 檔案：
-#   [finmind]
-#   token = "你的 FinMind Token"
-#
-#   FinMind Token 取得：https://finmindtrade.com/ 註冊後登入即可
-#
-# ── 自動排程說明 ──
-#   Streamlit Cloud 的 App 在有人開啟瀏覽器時才會「活著」。
-#   因此「排程」是：使用者開啟頁面時，
-#   若當天 18:00 後且尚未抓取，就自動觸發一次抓取。
-#   若需要無人值守的真正排程，可搭配：
-#     - GitHub Actions（每天定時 trigger 一個 HTTP 請求喚醒 App）
-#     - UptimeRobot 定時 ping（保持 App 存活）
-#
-# ==============================================================================
