@@ -2,20 +2,18 @@
 __pycache__/
 *.py[cod]
 *.pyo
-*.pyd
-*.egg-info/
-dist/
-build/
 .eggs/
 
 # 虛擬環境
 venv/
 .venv/
 env/
-.env
+
+# ⚠️ 絕對不能上傳到 Git！
+.streamlit/secrets.toml
 
 # Streamlit 快取
-.streamlit/
+.streamlit/cache/
 
 # 系統檔
 .DS_Store
@@ -24,4 +22,3 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-*.swp
