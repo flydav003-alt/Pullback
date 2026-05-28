@@ -186,6 +186,21 @@ hr { border-color: rgba(59,130,246,0.15) !important; margin: 10px 0 !important; 
     color: #e2e8f0 !important;
 }
 
+/* ── Selectbox 下拉選單字色修正（白底時看不到字）── */
+[data-baseweb="popover"] ul li,
+[data-baseweb="menu"] li,
+[data-baseweb="list-item"],
+[data-baseweb="popover"] [role="option"],
+[data-baseweb="select"] [role="option"] {
+    color: #1e293b !important;
+    background-color: #f8fafc !important;
+}
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="select"] [role="option"]:hover {
+    background-color: #dbeafe !important;
+    color: #1e40af !important;
+}
+
 /* ════════════════════════════════════════════════
    自訂元件樣式
    ════════════════════════════════════════════════ */
@@ -338,7 +353,14 @@ def extract_stock_ids(s: str) -> list[str]:
     return out
 
 
+def build_name_map(s: str) -> dict[str, str]:
+    """從 STOCK_STRING 解析 {股號: 中文名稱}"""
+    pairs = re.findall(r'\b(\d{4,5})\b([^\d\s]{1,12})', s)
+    return {code: name.strip() for code, name in pairs if name.strip()}
+
+
 DEFAULT_STOCK_IDS = extract_stock_ids(STOCK_STRING)
+STOCK_NAME_MAP = build_name_map(STOCK_STRING)
 
 # ==============================================================================
 # ── 3. FinMind API
@@ -558,6 +580,7 @@ def run_filter(
 
             results.append({
                 "代號":        sid,
+                "名稱":        STOCK_NAME_MAP.get(sid, ""),
                 "收盤價":      round(c0, 2),
                 "漲跌幅(%)":   round((c0-c1)/c1*100, 2) if c1 else 0,
                 "拉回深度(%)": round(dist, 2),
@@ -593,7 +616,7 @@ def kline(df: pd.DataFrame, sid: str) -> go.Figure:
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         vertical_spacing=0.03, row_heights=[0.72, 0.28],
-                        subplot_titles=(f"{sid}  K線 + 均線", "成交量"))
+                        subplot_titles=(f"{sid} {STOCK_NAME_MAP.get(sid, '')}  K線 + 均線", "成交量"))
 
     fig.add_trace(go.Candlestick(
         x=df.index, open=df["Open"], high=df["High"],
@@ -846,13 +869,14 @@ def main():
             st.warning("⚠️ 無符合個股。請看上方漏斗找瓶頸，或切換寬鬆模式。")
         else:
             st.markdown(f"### 📋 篩選結果 — {len(result_df)} 檔（依 RR 降序）")
-            disp = ["代號","收盤價","漲跌幅(%)","拉回深度(%)","量縮比","停損價","目標價","損益比(RR)","首波拉回"]
+            disp = ["代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)","量縮比","停損價","目標價","損益比(RR)","首波拉回"]
             st.dataframe(
                 result_df[disp],
                 use_container_width=True,
                 height=min(580, 45 + 38*len(result_df)),
                 column_config={
                     "代號":        st.column_config.TextColumn("代號", width="small"),
+                    "名稱":        st.column_config.TextColumn("名稱", width="small"),
                     "收盤價":      st.column_config.NumberColumn("收盤", format="%.2f"),
                     "漲跌幅(%)":   st.column_config.NumberColumn("漲跌", format="%.2f%%"),
                     "拉回深度(%)": st.column_config.NumberColumn("拉回", format="%.2f%%"),
@@ -875,8 +899,10 @@ def main():
 
             # ── K 線圖 ──
             st.markdown("### 📈 個股 K 線圖")
-            opts = [f"{r['代號']}  RR={r['損益比(RR)']}  收={r['收盤價']}"
-                    for _, r in result_df.iterrows()]
+            opts = [
+                f"{r['代號']} {STOCK_NAME_MAP.get(r['代號'], '')}  RR={r['損益比(RR)']}  收={r['收盤價']}"
+                for _, r in result_df.iterrows()
+            ]
             sel = st.selectbox("選擇個股", opts, index=0)
             idx = opts.index(sel)
             sid = result_df.iloc[idx]["代號"]
