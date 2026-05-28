@@ -1,9 +1,8 @@
 # ==============================================================================
-# 台股波段拉回選股工具 v3.2
-# 修正與升級：
-#   ① 淘汰 MA50，全面改為 MA60 (季線) 系統（含趨勢判定、K線圖繪製與UI文字）
-#   ② 波段拉回支援自訂雙向非對稱區間滑桿（預設 -5.0% 到 +10.0%）
-#   ③ 新增切換開關：可自由切換「小拉回 (MA20)」或「大拉回 (MA60)」作為策略與圖表基準
+# 台股波段拉回選股工具 v3.1
+# 修正：① 深色 CSS 完整覆蓋 Streamlit 白色預設主題
+#       ② 篩選條件新增「寬鬆模式」及各條件獨立計數分析
+#       ③ 止跌轉折放寬：今收 > 前 N 日任一高點 OR 今收站回 MA20
 # ==============================================================================
 
 import re
@@ -187,7 +186,9 @@ hr { border-color: rgba(59,130,246,0.15) !important; margin: 10px 0 !important; 
     color: #e2e8f0 !important;
 }
 
-/* ── Selectbox 下拉選單字色修正 ── */
+/* ── Selectbox 下拉選單字色修正 ──
+   Streamlit 把 popover 渲染在 body 最外層（portal），
+   需要直接針對 body 下的 baseweb 元件覆蓋 */
 body [data-baseweb="popover"],
 body [data-baseweb="menu"],
 body ul[role="listbox"] {
@@ -211,7 +212,8 @@ body [aria-selected="true"][role="option"] {
     color: #ffffff !important;
 }
 
-/* ── Tooltip ── */
+/* ── Tooltip（問號 hover）──
+   同樣是 portal 渲染在 body 最外層，需從 body 選取 */
 body [data-baseweb="tooltip"],
 body [role="tooltip"],
 div[data-baseweb="tooltip"] div,
@@ -225,6 +227,7 @@ body [class*="tooltip"] {
     font-size: 0.82rem !important;
     box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important;
 }
+/* tooltip 箭頭 */
 body [data-baseweb="tooltip"] [data-popper-arrow]::before,
 body [role="tooltip"] [data-popper-arrow]::before {
     border-color: #1e293b !important;
@@ -233,6 +236,8 @@ body [role="tooltip"] [data-popper-arrow]::before {
 /* ════════════════════════════════════════════════
    自訂元件樣式
    ════════════════════════════════════════════════ */
+
+/* 英雄標題 */
 .hero-header {
     background: linear-gradient(120deg, #1a2744 0%, #162038 45%, #1e1035 100%);
     border: 1px solid rgba(59,130,246,0.28);
@@ -262,6 +267,7 @@ body [role="tooltip"] [data-popper-arrow]::before {
 }
 .hero-subtitle { color: #94a3b8 !important; font-size: 0.9rem; margin: 0; }
 
+/* 排程狀態卡 */
 .sched-card {
     background: #0f1e33;
     border: 1px solid rgba(34,197,94,0.28);
@@ -275,6 +281,7 @@ body [role="tooltip"] [data-popper-arrow]::before {
 .sched-val.green { color: #22c55e; }
 .sched-val.amber { color: #fbbf24; }
 
+/* 策略說明欄 */
 .strat-info {
     background: linear-gradient(135deg, #172035, #1c2a48);
     border-left: 3px solid #3b82f6;
@@ -287,6 +294,7 @@ body [role="tooltip"] [data-popper-arrow]::before {
 }
 .strat-info strong { color: #60a5fa; }
 
+/* 條件漏斗分析卡 */
 .funnel-card {
     background: #0f1e33;
     border: 1px solid rgba(59,130,246,0.18);
@@ -306,6 +314,7 @@ body [role="tooltip"] [data-popper-arrow]::before {
 .funnel-pass { color: #22c55e; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
 .funnel-label { color: #64748b; font-size: 0.78rem; }
 
+/* 風險提醒 */
 .risk-warn {
     background: linear-gradient(135deg, #1f1510, #2d1b0e);
     border: 1px solid rgba(251,191,36,0.3);
@@ -320,7 +329,7 @@ body [role="tooltip"] [data-popper-arrow]::before {
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# ── 2. 股票池 (100% 完整保留，不漏掉任何一檔)
+# ── 2. 股票池
 # ==============================================================================
 STOCK_STRING = """
 2454聯發科3035智原3443創意3661世芯-KY6526達發5269祥碩3529力旺5274信驊6533晶心科
@@ -343,7 +352,7 @@ STOCK_STRING = """
 5483中美晶3680家登4749新應材6532瑞耘8091翔名3029零壹3150鈺寶3555重鵬3567逸昌
 4951精拓科5443均豪6573虹揚-KY6720久昌6823濾能6829千附精密6895宏碩系統6921嘉雨思
 7704明遠精密7749意騰-KY7751竑騰7769鴻勁7810捷創科技8024佑華8102傑霖科技2404漢唐
-6139亞翔6196帆宣6215และ椿6438迅得6691洋基工程6698旭暉應材7730暉盛7828創新服務
+6139亞翔6196帆宣6215和椿6438迅得6691洋基工程6698旭暉應材7730暉盛7828創新服務
 3037欣興8046南電3189景碩2383台光電2368金像電6274台燿4958臻鼎-KY6269台郡2313華通
 6191精成科5469瀚宇博2367燿華3044健鼎3645達邁3715定穎投控6213聯茂6672騰輝電子-KY
 8039台虹8213志超6108競國6153嘉聯益2317鴻海3231緯創2382廣達6669緯穎2356英業達
@@ -365,7 +374,9 @@ STOCK_STRING = """
 4760勤凱6175立敦6284佳邦5328華容3357臺慶科8121越峰5228鈺鎧3042晶技
 """
 
+
 def extract_stock_ids(s: str) -> list[str]:
+    """提取 4~5 位數股號，re.ASCII 確保中文不干擾 \\b 邊界"""
     codes = re.findall(r'\b(\d{4,5})\b', s, re.ASCII)
     seen, out = set(), []
     for c in codes:
@@ -373,9 +384,14 @@ def extract_stock_ids(s: str) -> list[str]:
             seen.add(c); out.append(c)
     return out
 
+
 def build_name_map(s: str) -> dict[str, str]:
+    """從 STOCK_STRING 解析 {股號: 中文名稱}
+    注意：\b 在中文字元前會失效，改用 lookahead 確保名稱正確截斷
+    """
     pairs = re.findall(r'(\d{4,5})([^\d\s]{1,12}?)(?=\d{4}|\s|$)', s)
     return {code: name.strip() for code, name in pairs if name.strip()}
+
 
 DEFAULT_STOCK_IDS = extract_stock_ids(STOCK_STRING)
 STOCK_NAME_MAP = build_name_map(STOCK_STRING)
@@ -384,6 +400,7 @@ STOCK_NAME_MAP = build_name_map(STOCK_STRING)
 # ── 3. FinMind API
 # ==============================================================================
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+
 
 def get_token() -> str:
     try:
@@ -396,7 +413,12 @@ def get_token() -> str:
         st.error("⚠️ 找不到 FinMind token，請至 Settings → Secrets 設定。")
         st.stop()
 
+
 def fetch_prices(ids: list[str], start: str, end: str, token: str) -> dict[str, pd.DataFrame]:
+    """
+    逐支呼叫 FinMind TaiwanStockPrice，回傳 dict[stock_id → OHLCV DataFrame]
+    每支間隔 50ms，避免限流
+    """
     result: dict[str, pd.DataFrame] = {}
     RENAME = {
         "date": "Date", "open": "Open",
@@ -433,10 +455,12 @@ def fetch_prices(ids: list[str], start: str, end: str, token: str) -> dict[str, 
         time.sleep(0.05)
     return result
 
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_fetch(ids_tuple: tuple, start: str, end: str, token: str):
     data = fetch_prices(list(ids_tuple), start, end, token)
     return data, len(data), len(ids_tuple) - len(data)
+
 
 # ==============================================================================
 # ── 4. 排程
@@ -444,11 +468,13 @@ def cached_fetch(ids_tuple: tuple, start: str, end: str, token: str):
 def tw_now() -> datetime:
     return datetime.now(tz=TZ_TW)
 
+
 def should_auto_fetch() -> bool:
     n = tw_now()
     if n.weekday() >= 5 or n.hour < 18:
         return False
     return st.session_state.get("last_fetch_date") != n.date()
+
 
 def next_fetch_str() -> str:
     n = tw_now()
@@ -460,25 +486,38 @@ def next_fetch_str() -> str:
         d += timedelta(days=1)
     return d.replace(hour=18, minute=0, second=0, microsecond=0).strftime("%m/%d %H:%M")
 
+
 # ==============================================================================
 # ── 5. 技術指標
 # ==============================================================================
 def sma(s: pd.Series, w: int) -> pd.Series:
     return s.rolling(w, min_periods=w).mean()
 
+
 def atr(df: pd.DataFrame, w: int = 14) -> pd.Series:
     h, l, c = df["High"], df["Low"], df["Close"]
     tr = pd.concat([(h - l), (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
     return tr.rolling(w).mean()
 
+
 # ==============================================================================
-# ── 6. 篩選策略 (升級版 v3.2)
+# ── 6. 篩選策略（含條件漏斗統計）
+#
+#  新增「寬鬆模式」（strict=False）：
+#    ④ 量縮：放寬為 < vol_ratio * 1.3
+#    ⑤ 止跌轉折：今收 > 昨高  OR  今收 > MA20（MA20 站回也算）
+#
+#  同時回傳各條件通過數，方便 UI 顯示漏斗分析
 # ==============================================================================
 def run_filter(
     data: dict[str, pd.DataFrame],
     p: dict,
     strict: bool = True,
 ) -> tuple[pd.DataFrame, dict]:
+    """
+    回傳 (result_df, funnel_counts)
+    funnel_counts = {條件名: 通過數}
+    """
     funnel = {
         "① 長線多頭":  0,
         "② 動能記憶":  0,
@@ -487,6 +526,7 @@ def run_filter(
         "⑤ 止跌轉折":  0,
     }
     results = []
+
     vol_limit = p["vol_ratio"] * (1.3 if not strict else 1.0)
 
     for sid, df in data.items():
@@ -497,22 +537,24 @@ def run_filter(
             c, h, l, v = df["Close"], df["High"], df["Low"], df["Volume"]
 
             ma20_s  = sma(c, 20)
-            ma60_s  = sma(c, 60)   # 核心升級：MA50 轉 MA60
+            ma50_s  = sma(c, 50)
+            ma60_s  = sma(c, 60)
             ma200_s = sma(c, 200)
             atr14   = atr(df, 14)
 
             c0, c1    = c.iloc[-1], c.iloc[-2]
             h0, h1    = h.iloc[-1], h.iloc[-2]
             ma20_0    = ma20_s.iloc[-1]
+            ma50_0    = ma50_s.iloc[-1]
             ma60_0    = ma60_s.iloc[-1]
             ma200_0   = ma200_s.iloc[-1]
             atr_0     = atr14.iloc[-1]
 
-            if any(pd.isna([c0, c1, h1, ma20_0, ma60_0, ma200_0, atr_0])):
+            if any(pd.isna([c0, c1, h1, ma20_0, ma50_0, ma60_0, ma200_0, atr_0])):
                 continue
 
-            # ① 長線多頭排列判定 (改為 MA60 > MA200)
-            if not (ma60_0 > ma200_0 and c0 > ma200_0):
+            # ① 長線多頭
+            if not (ma50_0 > ma200_0 and c0 > ma200_0):
                 continue
             funnel["① 長線多頭"] += 1
 
@@ -524,13 +566,13 @@ def run_filter(
                 continue
             funnel["② 動能記憶"] += 1
 
-            # ③ 波段拉回 (雙系統切換：動態選擇 MA20 或 MA60 作為基準線)
-            base_ma_s = ma20_s if p["pullback_type"] == "小拉回 (MA20)" else ma60_s
-            base_ma_0 = base_ma_s.iloc[-1]
-            
-            dist = (c0 - base_ma_0) / base_ma_0 * 100
-            # 檢查是否落在非對稱自訂區間 (如 -5% ~ +10%)
-            if not (p["pullback_range"][0] <= dist <= p["pullback_range"][1]):
+            # ③ 波段拉回
+            pullback_ma = p.get("pullback_ma", 20)
+            ma_ref = ma20_0 if pullback_ma == 20 else ma60_0
+            if pd.isna(ma_ref) or ma_ref == 0:
+                continue
+            dist = (c0 - ma_ref) / ma_ref * 100
+            if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
                 continue
             funnel["③ 波段拉回"] += 1
 
@@ -546,28 +588,29 @@ def run_filter(
 
             # ⑤ 止跌轉折
             # 嚴格：今收 > 昨高
-            # 寬鬆：今收 > 昨高  OR  今收站回基準均線（適應 MA20/MA60）
-            base_ma_1 = base_ma_s.iloc[-2] if len(base_ma_s) >= 2 else np.nan
+            # 寬鬆：今收 > 昨高  OR  今收站回 MA20（今收 > MA20 且昨收 < MA20）
+            ma20_1 = ma20_s.iloc[-2] if len(ma20_s) >= 2 else np.nan
             reversal_strict = (c0 > h1)
             reversal_loose  = reversal_strict or (
-                not pd.isna(base_ma_1) and c0 > base_ma_0 and c1 < base_ma_1
+                not pd.isna(ma20_1) and c0 > ma20_0 and c1 < ma20_1
             )
             passed_reversal = reversal_strict if strict else reversal_loose
             if not passed_reversal:
                 continue
             funnel["⑤ 止跌轉折"] += 1
 
-            # 第一波拉回 (適應自訂均線與非對稱區間)
+            # 第一波拉回
             first = True
+            ma_ref_series = ma20_s if pullback_ma == 20 else ma60_s
             for i in range(2, 12):
                 if i + 1 > len(c): break
-                ci = c.iloc[-i]; hi1 = h.iloc[-(i+1)]; base_mai = base_ma_s.iloc[-i]
-                if pd.isna([ci, hi1, base_mai]).any(): continue
-                dist_i = (ci - base_mai) / base_mai * 100
-                if (p["pullback_range"][0] <= dist_i <= p["pullback_range"][1]) and ci > hi1:
+                ci = c.iloc[-i]; hi1 = h.iloc[-(i+1)]; m_ref_i = ma_ref_series.iloc[-i]
+                if pd.isna([ci, hi1, m_ref_i]).any(): continue
+                ref_dist = (ci - m_ref_i) / m_ref_i * 100
+                if (p["pullback_lower"] <= ref_dist <= p["pullback_upper"]) and ci > hi1:
                     first = False; break
 
-            # 風險收益計算
+            # 風險收益
             rl       = min(l.iloc[-1], l.iloc[-2])
             stop     = min(max(c0 - 1.5*atr_0, rl*0.98), c0*0.95)
             target   = max(c0*1.20, h.iloc[-M:].max()*1.02)
@@ -601,20 +644,21 @@ def run_filter(
         df_out = df_out.sort_values("損益比(RR)", ascending=False).reset_index(drop=True)
     return df_out, funnel
 
+
 # ==============================================================================
-# ── 7. K 線圖 (升級為 MA60 系統)
+# ── 7. K 線圖
 # ==============================================================================
 def kline(df: pd.DataFrame, sid: str) -> go.Figure:
     df = df.copy().sort_index().tail(250)
     df["MA20"]  = sma(df["Close"], 20)
-    df["MA60"]  = sma(df["Close"], 60) # 核心更換：MA50 -> MA60
+    df["MA60"]  = sma(df["Close"], 60)
     df["MA200"] = sma(df["Close"], 200)
 
     colors = ["#ef4444" if r["Close"] >= r["Open"] else "#22c55e" for _, r in df.iterrows()]
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         vertical_spacing=0.03, row_heights=[0.72, 0.28],
-                        subplot_titles=(f"{sid} {STOCK_NAME_MAP.get(sid, '')}  K線 + 均線 (MA20 / MA60 / MA200)", "成交量"))
+                        subplot_titles=(f"{sid} {STOCK_NAME_MAP.get(sid, '')}  K線 + 均線", "成交量"))
 
     fig.add_trace(go.Candlestick(
         x=df.index, open=df["Open"], high=df["High"],
@@ -626,7 +670,7 @@ def kline(df: pd.DataFrame, sid: str) -> go.Figure:
 
     for col_name, clr, w, dash in [
         ("MA20", "#fb923c", 1.5, "solid"),
-        ("MA60", "#60a5fa", 1.8, "solid"), # 藍色代表 MA60 季線
+        ("MA60", "#60a5fa", 1.8, "solid"),
         ("MA200","#f43f5e", 2.0, "dot"),
     ]:
         fig.add_trace(go.Scatter(
@@ -654,6 +698,7 @@ def kline(df: pd.DataFrame, sid: str) -> go.Figure:
         ann.font.update(color="#64748b", size=11)
     return fig
 
+
 # ==============================================================================
 # ── 8. 資料抓取包裝
 # ==============================================================================
@@ -671,6 +716,7 @@ def do_fetch(ids: list[str], token: str):
     })
     return data, ok, skip
 
+
 # ==============================================================================
 # ── 9. 主程式
 # ==============================================================================
@@ -685,7 +731,9 @@ def main():
         st.toast("✅ 排程自動抓取完成！", icon="🕕")
         has_data = True
 
+    # ════════════════════════════════════════════════
     # 標題
+    # ════════════════════════════════════════════════
     st.markdown("""
     <div class="hero-header">
         <p class="hero-title">📡 台股波段拉回選股系統</p>
@@ -717,14 +765,14 @@ def main():
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
-    # 策略說明 (修改為 MA60)
+    # 策略說明
     st.markdown("""<div class="strat-info">
         🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
-        <strong>①長線多頭</strong>（MA60>MA200, Close>MA200）→
+        <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
         <strong>②動能記憶</strong>（近期曾創N日新高）→
-        <strong>③波段拉回</strong>（Close 處於自訂均線區間）→
+        <strong>③波段拉回</strong>（Close≈MA20/MA60 下限~上限%）→
         <strong>④量縮洗盤</strong>（近3日量&lt;20日量×Y）→
-        <strong>⑤止跌轉折</strong>（今收>昨高 或 站回基準均線）
+        <strong>⑤止跌轉折</strong>（今收>昨高 或 站回均線）
     </div>""", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════
@@ -734,12 +782,12 @@ def main():
         st.markdown("### ⚙️ 策略參數")
 
         strict_mode = st.toggle("嚴格模式", value=True,
-            help="關閉後：量縮放寬×1.3；止跌轉折多接受『今收站回基準均線』")
-        st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 多接受基準均線站回 + 量縮放寬")
+            help="關閉後：量縮放寬×1.3；止跌轉折多接受『今收站回MA20』")
+        st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 多接受MA20站回 + 量縮放寬")
         st.divider()
 
         st.markdown("**① 長線多頭**")
-        st.caption("MA60 > MA200 且 Close > MA200（固定）")
+        st.caption("MA50 > MA200 且 Close > MA200（固定）")
         st.divider()
 
         st.markdown("**② 動能記憶**")
@@ -748,13 +796,22 @@ def main():
         st.divider()
 
         st.markdown("**③ 波段拉回**")
-        # 升級亮點：均線切換系統與非對稱滑桿
-        pullback_type = st.radio("選擇拉回基準線", ["小拉回 (MA20)", "大拉回 (MA60)"], index=0, horizontal=True)
-        pullback_range = st.slider(
-            "Close 與均線距離區間 (%)",
-            min_value=-15.0, max_value=15.0, value=(-5.0, 10.0), step=0.5,
-            help="負數代表跌破均線，正數代表在均線之上。預設容許跌破 5% 到均線上方 10% 之間。"
+        pullback_type = st.radio(
+            "拉回基準均線",
+            ["小拉回 MA20", "大拉回 MA60"],
+            index=0, horizontal=True,
+            help="MA20：短波段拉回（10~30天）；MA60：大波段拉回（季線級別）"
         )
+        pullback_ma = 20 if "MA20" in pullback_type else 60
+        pullback_lower = st.slider(
+            "下限（股價低於均線 %）", -10.0, 0.0, -5.0, 0.5,
+            help="負值 = 股價跌破均線幾%。-5% 代表最多允許跌到均線以下 5%"
+        )
+        pullback_upper = st.slider(
+            "上限（股價高於均線 %）", 0.0, 15.0, 10.0, 0.5,
+            help="正值 = 股價站在均線上幾%。10% 代表最多允許站在均線以上 10%"
+        )
+        st.caption(f"📐 篩選範圍：{'MA20' if pullback_ma==20 else 'MA60'} 距離 {pullback_lower:+.1f}% ～ {pullback_upper:+.1f}%")
         st.divider()
 
         st.markdown("**④ 量縮比例**")
@@ -778,9 +835,11 @@ def main():
         st.caption(f"已設定 **{len(user_ids)}** 檔股票")
         st.divider()
 
+        # ── 抓取按鈕（唯一會打 FinMind 的地方）──
         run_btn = st.button("🚀 抓取最新資料", type="primary", use_container_width=True,
                             help="點一次即可，資料會記憶在本頁。調整參數不需再按此按鈕。")
 
+        # 資料狀態顯示
         if has_data:
             fetch_time = st.session_state.get("last_fetch_time", "")
             fetch_cnt  = st.session_state.get("success_cnt", 0)
@@ -795,11 +854,26 @@ def main():
         used = len(user_ids)
         st.progress(min(used/600, 1.0), text=f"每次抓取消耗 {used}/600 calls")
 
-    # 參數包裝
+    # ════════════════════════════════════════════════
+    # 主頁面邏輯
+    # 核心架構：「抓資料」與「篩選」完全分離
+    #
+    #  ┌─ run_btn 按下 ─────────────────────────────┐
+    #  │  呼叫 FinMind API（唯一消耗 token 的地方）  │
+    #  │  結果存入 st.session_state["data_dict"]     │
+    #  └────────────────────────────────────────────┘
+    #           ↓ 資料存活於整個 session
+    #  ┌─ 每次頁面 rerun（含滑動 Slider）───────────┐
+    #  │  直接從 session_state 取資料               │
+    #  │  重跑 run_filter()（純本地運算，<1秒）      │
+    #  │  完全不碰 FinMind                          │
+    #  └────────────────────────────────────────────┘
+    # ════════════════════════════════════════════════
     params = dict(momentum_days=momentum_days, high_window=high_window,
-                  pullback_type=pullback_type, pullback_range=pullback_range, 
+                  pullback_ma=pullback_ma, pullback_lower=pullback_lower, pullback_upper=pullback_upper,
                   vol_ratio=vol_ratio, min_rr=min_rr)
 
+    # Step A：有按「抓取」按鈕 → 打 FinMind，存入 session_state
     if run_btn:
         pb = st.progress(0, text="⏳ 從 FinMind 抓取資料中（約 1~2 分鐘，之後調參數不需再抓）...")
         with st.spinner(""):
@@ -809,13 +883,16 @@ def main():
         time.sleep(0.8)
         pb.empty()
 
+    # Step B：有資料就永遠顯示篩選結果（不管有沒有按按鈕）
     if has_data:
         data = st.session_state["data_dict"]
         ok   = st.session_state["success_cnt"]
         skip = st.session_state["skip_cnt"]
 
+        # 篩選（純本地運算，每次 rerun 都跑，< 1 秒，不打 API）
         result_df, funnel = run_filter(data, params, strict=strict_mode)
 
+        # ── 指標卡片 ──
         k1, k2, k3, k4 = st.columns(4)
         with k1: st.metric("📊 已載入", f"{ok:,} 檔")
         with k2: st.metric("⏭️ 無資料", f"{skip:,} 檔")
@@ -825,6 +902,7 @@ def main():
 
         st.divider()
 
+        # ── 條件漏斗分析 ──
         st.markdown("#### 🔬 條件漏斗分析（各條件通過數，幫助你找到調參瓶頸）")
         total = len(data)
         fcols = st.columns(5)
@@ -843,6 +921,7 @@ def main():
 
         st.divider()
 
+        # ── 結果表格 ──
         if result_df.empty:
             st.warning("⚠️ 無符合個股。請看上方漏斗找瓶頸，或切換寬鬆模式。")
         else:
@@ -875,6 +954,7 @@ def main():
 
             st.divider()
 
+            # ── K 線圖 ──
             st.markdown("### 📈 個股 K 線圖")
             opts = [
                 f"{r['代號']} {STOCK_NAME_MAP.get(r['代號'], '')}  RR={r['損益比(RR)']}  收={r['收盤價']}"
@@ -894,6 +974,7 @@ def main():
                 with kd: st.metric("RR",  f"{row['損益比(RR)']:.2f}x")
 
     else:
+        # 尚無資料
         st.info("👈 點擊左側「🚀 抓取最新資料」開始，或等待每日 18:00 自動抓取。\n\n"
                 "**資料載入一次後，調整任何篩選參數都不會再消耗 FinMind API。**")
         c1, c2 = st.columns(2)
@@ -901,10 +982,10 @@ def main():
             st.markdown(f"| 參數 | 值 |\n|---|---|\n"
                         f"| 動能回看 N | **{momentum_days}** 天 |\n"
                         f"| 新高窗口 M | **{high_window}** 天 |\n"
-                        f"| 拉回均線基準 | **{pullback_type}** |\n"
-                        f"| 拉回深度區間 | **{pullback_range[0]}% ~ {pullback_range[1]}%** |")
+                        f"| 拉回基準 | **{'MA20' if pullback_ma==20 else 'MA60'}** |")
         with c2:
             st.markdown(f"| 參數 | 值 |\n|---|---|\n"
+                        f"| 拉回範圍 | **{pullback_lower:+.1f}% ～ {pullback_upper:+.1f}%** |\n"
                         f"| 量縮比 Y | **{vol_ratio}** |\n"
                         f"| 最低 RR | **{min_rr}x** |\n"
                         f"| 股票池 | **{len(user_ids)}** 檔 |")
@@ -912,6 +993,7 @@ def main():
     st.markdown("""<div class="risk-warn">
         ⚠️ 本系統僅供技術分析參考，不構成投資建議。股市有風險，請嚴格執行停損。
     </div>""", unsafe_allow_html=True)
+
 
 if __name__ == "__main__":
     main()
