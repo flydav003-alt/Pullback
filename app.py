@@ -179,26 +179,37 @@ hr { border-color: rgba(59,130,246,0.15) !important; margin: 10px 0 !important; 
 /* ── Warning / Info ── */
 [data-testid="stAlert"] { border-radius: 8px !important; }
 
-/* ── Selectbox ── */
+/* ── Selectbox 選單本體 ── */
 [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
     background-color: #0f1c30 !important;
     border-color: rgba(59,130,246,0.25) !important;
     color: #e2e8f0 !important;
 }
 
-/* ── Selectbox 下拉選單字色修正（白底時看不到字）── */
-[data-baseweb="popover"] ul li,
-[data-baseweb="menu"] li,
-[data-baseweb="list-item"],
-[data-baseweb="popover"] [role="option"],
-[data-baseweb="select"] [role="option"] {
-    color: #1e293b !important;
-    background-color: #f8fafc !important;
+/* ── Selectbox 下拉選單字色修正 ──
+   Streamlit 把 popover 渲染在 body 最外層（portal），
+   需要直接針對 body 下的 baseweb 元件覆蓋 */
+body [data-baseweb="popover"],
+body [data-baseweb="menu"],
+body ul[role="listbox"] {
+    background-color: #1e293b !important;
+    border: 1px solid rgba(59,130,246,0.3) !important;
 }
-[data-baseweb="popover"] [role="option"]:hover,
-[data-baseweb="select"] [role="option"]:hover {
-    background-color: #dbeafe !important;
-    color: #1e40af !important;
+body [data-baseweb="menu"] li,
+body [data-baseweb="list-item"],
+body ul[role="listbox"] li,
+body [role="option"] {
+    background-color: #1e293b !important;
+    color: #e2e8f0 !important;
+}
+body [role="option"]:hover,
+body [data-baseweb="menu"] li:hover {
+    background-color: #2d4a7a !important;
+    color: #ffffff !important;
+}
+body [aria-selected="true"][role="option"] {
+    background-color: #1d4ed8 !important;
+    color: #ffffff !important;
 }
 
 /* ════════════════════════════════════════════════
@@ -354,8 +365,10 @@ def extract_stock_ids(s: str) -> list[str]:
 
 
 def build_name_map(s: str) -> dict[str, str]:
-    """從 STOCK_STRING 解析 {股號: 中文名稱}"""
-    pairs = re.findall(r'\b(\d{4,5})\b([^\d\s]{1,12})', s)
+    """從 STOCK_STRING 解析 {股號: 中文名稱}
+    注意：\b 在中文字元前會失效，改用 lookahead 確保名稱正確截斷
+    """
+    pairs = re.findall(r'(\d{4,5})([^\d\s]{1,12}?)(?=\d{4}|\s|$)', s)
     return {code: name.strip() for code, name in pairs if name.strip()}
 
 
