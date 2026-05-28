@@ -194,13 +194,18 @@ STOCK_STRING = """
 
 def extract_tickers(stock_str: str) -> list[str]:
     """
-    使用正則表達式從股票字串中提取所有 4~5 位數的股號，
-    並加上 .TW 後綴，建立預設 ticker_list。
+    使用正則表達式從股票字串中提取所有 4~5 位數的股號。
+
+    ⚠️ 重要：Python 3 的 re 模組預設 Unicode 模式，
+    中文字符也屬於 \\w（word character），導致 \\b 在
+    「數字↔中文」交界處無法識別為 word boundary。
+    加上 re.ASCII 旗標後，\\w 只匹配 ASCII [a-zA-Z0-9_]，
+    中文變成 \\W，\\b 才能正確在數字與中文之間觸發。
     """
-    codes = re.findall(r'\b(\d{4,5})\b', stock_str)
-    # 去重並保持順序
-    seen = set()
-    unique_codes = []
+    codes = re.findall(r'\b(\d{4,5})\b', stock_str, re.ASCII)
+    # 去重並保持原始順序
+    seen: set[str] = set()
+    unique_codes: list[str] = []
     for c in codes:
         if c not in seen:
             seen.add(c)
@@ -760,8 +765,8 @@ def main():
             height=200,
             help="可自訂篩選股票池，系統自動判斷上市(.TW) 或 上櫃(.TWO)"
         )
-        # 解析使用者輸入
-        user_codes = re.findall(r'\b(\d{4,5})\b', user_input)
+        # 解析使用者輸入（同樣加 re.ASCII，避免中文干擾 \b 邊界判斷）
+        user_codes = re.findall(r'\b(\d{4,5})\b', user_input, re.ASCII)
         user_tickers = list({f"{c}.TW" for c in user_codes})  # 去重
 
         st.caption(f"已設定 {len(user_tickers)} 檔股票")
