@@ -212,6 +212,27 @@ body [aria-selected="true"][role="option"] {
     color: #ffffff !important;
 }
 
+/* ── Tooltip（問號 hover）──
+   同樣是 portal 渲染在 body 最外層，需從 body 選取 */
+body [data-baseweb="tooltip"],
+body [role="tooltip"],
+div[data-baseweb="tooltip"] div,
+[data-testid="stTooltipHoverTarget"] + div,
+body [class*="Tooltip"],
+body [class*="tooltip"] {
+    background-color: #1e293b !important;
+    color: #e2e8f0 !important;
+    border: 1px solid rgba(59,130,246,0.35) !important;
+    border-radius: 6px !important;
+    font-size: 0.82rem !important;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important;
+}
+/* tooltip 箭頭 */
+body [data-baseweb="tooltip"] [data-popper-arrow]::before,
+body [role="tooltip"] [data-popper-arrow]::before {
+    border-color: #1e293b !important;
+}
+
 /* ════════════════════════════════════════════════
    自訂元件樣式
    ════════════════════════════════════════════════ */
