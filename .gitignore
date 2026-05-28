@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 虛擬環境
+venv/
+.venv/
+env/
+.env
+
+# Streamlit 快取
+.streamlit/
+
+# 系統檔
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
