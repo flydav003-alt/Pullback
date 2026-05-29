@@ -68,7 +68,24 @@ html, body { background-color: #0a0e1a !important; }
    ★ 側邊欄展開/摺疊按鈕全客製化 (取代原生英文與圖示) ★
    ========================================================== */
 
-/* 1. 左上角「展開」按鈕 */
+/* 1. 徹底隱藏原生按鈕內的圖示與英文文字 (Streamlit 預設的 Collapse 字樣) */
+[data-testid="collapsedControl"] svg,
+[data-testid="collapsedControl"] span,
+[data-testid="stSidebarCollapseButton"] svg,
+[data-testid="stSidebarCollapseButton"] span,
+[data-testid="stSidebarHeader"] button svg,
+[data-testid="stSidebarHeader"] button span {
+    display: none !important;
+}
+
+/* 強制透明化原生字體，杜絕任何英文殘留 */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarHeader"] button {
+    color: transparent !important;
+}
+
+/* 2. 左上角「展開」按鈕 (側邊欄收起時) */
 [data-testid="collapsedControl"] {
     display: flex !important;
     visibility: visible !important;
@@ -88,10 +105,6 @@ html, body { background-color: #0a0e1a !important; }
     transform: translateY(-2px) !important;
     box-shadow: 0 6px 16px rgba(59, 130, 246, 0.6) !important;
 }
-/* 隱藏原生箭頭 */
-[data-testid="collapsedControl"] svg {
-    display: none !important;
-}
 /* 注入發亮中文 */
 [data-testid="collapsedControl"]::after {
     content: "✨ 展開" !important;
@@ -100,9 +113,11 @@ html, body { background-color: #0a0e1a !important; }
     font-size: 1.05rem !important;
     letter-spacing: 2px !important;
     font-family: 'Noto Sans TC', sans-serif !important;
+    visibility: visible !important;
+    display: block !important;
 }
 
-/* 2. 側邊欄內的「摺疊」按鈕 */
+/* 3. 側邊欄內的「摺疊」按鈕 (側邊欄展開時) */
 [data-testid="stSidebarCollapseButton"],
 [data-testid="stSidebarHeader"] button {
     background: rgba(239, 68, 68, 0.15) !important;
@@ -118,11 +133,6 @@ html, body { background-color: #0a0e1a !important; }
 [data-testid="stSidebarHeader"] button:hover {
     background: rgba(239, 68, 68, 0.4) !important;
 }
-/* 隱藏原生圖示/英文 */
-[data-testid="stSidebarCollapseButton"] svg,
-[data-testid="stSidebarHeader"] button svg {
-    display: none !important;
-}
 /* 注入紅色中文 */
 [data-testid="stSidebarCollapseButton"]::after,
 [data-testid="stSidebarHeader"] button::after {
@@ -132,6 +142,8 @@ html, body { background-color: #0a0e1a !important; }
     font-size: 0.95rem !important;
     letter-spacing: 1px !important;
     font-family: 'Noto Sans TC', sans-serif !important;
+    visibility: visible !important;
+    display: block !important;
 }
 /* ========================================================== */
 
