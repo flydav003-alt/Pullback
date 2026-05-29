@@ -556,6 +556,8 @@ def run_filter(
             c, h, l, v = df["Close"], df["High"], df["Low"], df["Volume"]
 
             ma20_s  = sma(c, 20)
+            ma5_s   = sma(c, 5)
+            ma10_s  = sma(c, 10)
             ma50_s  = sma(c, 50)
             ma60_s  = sma(c, 60)
             ma200_s = sma(c, 200)
@@ -563,13 +565,16 @@ def run_filter(
 
             c0, c1  = c.iloc[-1], c.iloc[-2]
             h1      = h.iloc[-2]
-            ma20_0  = ma20_s.iloc[-1]
+            ma5_0   = ma5_s.iloc[-1];   ma5_1  = ma5_s.iloc[-2]  if len(ma5_s)  >= 2 else np.nan
+            ma10_0  = ma10_s.iloc[-1];  ma10_1 = ma10_s.iloc[-2] if len(ma10_s) >= 2 else np.nan
+            ma20_0  = ma20_s.iloc[-1];  ma20_1 = ma20_s.iloc[-2] if len(ma20_s) >= 2 else np.nan
             ma50_0  = ma50_s.iloc[-1]
             ma60_0  = ma60_s.iloc[-1]
             ma200_0 = ma200_s.iloc[-1]
             atr_0   = atr14.iloc[-1]
 
-            if any(pd.isna([c0, c1, h1, ma20_0, ma50_0, ma60_0, ma200_0, atr_0])):
+            if any(pd.isna([c0, c1, h1, ma5_0, ma5_1, ma10_0, ma10_1,
+                            ma20_0, ma20_1, ma50_0, ma60_0, ma200_0, atr_0])):
                 continue
 
             # ① 長線多頭
@@ -585,35 +590,73 @@ def run_filter(
                 continue
             funnel["② 動能記憶"] += 1
 
-            # ③ 波段拉回
-            pullback_ma = p.get("pullback_ma", 20)
-            ma_ref = ma20_0 if pullback_ma == 20 else ma60_0
-            if pd.isna(ma_ref) or ma_ref == 0:
-                continue
-            dist = (c0 - ma_ref) / ma_ref * 100
-            if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
-                continue
+            # ③ 波段拉回 — 四種買點模式
+            pullback_mode = p.get("pullback_mode", "回踩MA20")
+            pullback_ma   = p.get("pullback_ma", 20)
+            dist_ma20 = (c0 - ma20_0) / ma20_0 * 100  # 距MA20的距離（永遠計算，作為前提）
+
+            if pullback_mode == "回踩MA20":
+                # 今收在MA20上方 0 ~ upper%
+                ma_ref = ma20_0
+                dist = dist_ma20
+                if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
+                    continue
+
+            elif pullback_mode == "回踩MA60":
+                # 今收在MA60上方 0 ~ upper%
+                ma_ref = ma60_0
+                if pd.isna(ma_ref) or ma_ref == 0:
+                    continue
+                dist = (c0 - ma_ref) / ma_ref * 100
+                if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
+                    continue
+
+            elif pullback_mode == "站回MA5":
+                # 昨收 < MA5（昨天跌破），今收 > MA5（今天站回）
+                # 同時今收距MA20 <= upper%（確保在均線附近，非亂彈）
+                ma_ref = ma20_0  # 回踩確認用MA20
+                if not (c1 < ma5_1 and c0 > ma5_0):
+                    continue
+                if not (0 <= dist_ma20 <= p["pullback_upper"]):
+                    continue
+
+            elif pullback_mode == "站回MA10":
+                # 昨收 < MA10，今收 > MA10
+                # 同時今收距MA20 <= upper%
+                ma_ref = ma20_0
+                if not (c1 < ma10_1 and c0 > ma10_0):
+                    continue
+                if not (0 <= dist_ma20 <= p["pullback_upper"]):
+                    continue
+
+            else:
+                ma_ref = ma20_0
             funnel["③ 波段拉回"] += 1
 
             # ③+ 回踩確認（可選）
-            # 近 touch_window 日內，至少一根 Low <= ma_ref * (1 + touch_tol/100)
-            # touch_tol=3% 表示 Low 曾進入均線以上 3% 以內（含跌破）即算回踩
             touch_enabled = p.get("touch_enabled", True)
             if touch_enabled:
                 touch_window = p.get("touch_window", 5)
                 touch_tol    = p.get("touch_tol", 3.0)
-                ma_ref_series = ma20_s if pullback_ma == 20 else ma60_s
-                window_low  = l.iloc[-touch_window:]
-                window_ma   = ma_ref_series.iloc[-touch_window:]
+                # 回踩確認的均線：MA20/MA60回踩用所選均線；MA5/MA10站回用MA20
+                if pullback_mode == "回踩MA60":
+                    ma_ref_series = ma60_s
+                else:
+                    ma_ref_series = ma20_s
+                window_low      = l.iloc[-touch_window:]
+                window_ma       = ma_ref_series.iloc[-touch_window:]
                 touch_threshold = window_ma * (1 + touch_tol / 100)
                 touched = (window_low <= touch_threshold).any()
                 if not touched:
                     continue
             funnel["③+ 回踩確認"] += 1
 
-            # ④ MA20 斜率（確保均線仍向上，拒絕均線崩跌中的回踩）
-            ma20_slope = (ma20_s.iloc[-1] - ma20_s.iloc[-6]) if len(ma20_s) >= 6 else 0.0
-            if ma20_slope < p.get("ma20_slope_min", -0.5):
+            # ④ 均線斜率（MA60模式看MA60斜率，其餘看MA20斜率）
+            if pullback_mode == "回踩MA60":
+                slope_val = (ma60_s.iloc[-1] - ma60_s.iloc[-11]) if len(ma60_s) >= 11 else 0.0
+            else:
+                slope_val = (ma20_s.iloc[-1] - ma20_s.iloc[-6]) if len(ma20_s) >= 6 else 0.0
+            if slope_val < p.get("ma20_slope_min", -0.5):
                 continue
             funnel["④ MA20斜率"] += 1
 
@@ -629,22 +672,24 @@ def run_filter(
 
             # ⑥ 止跌轉折
             # 嚴格：今收 > 昨高
-            # 寬鬆：今收 > 昨高  OR  今收站回 MA20（今收 > MA20 且昨收 < MA20）
-            ma20_1 = ma20_s.iloc[-2] if len(ma20_s) >= 2 else np.nan
+            # 寬鬆：今收 > 昨高  OR  今收站回所選均線（今收 > ma_ref 且昨收 < 昨日ma_ref）
+            if pullback_mode == "回踩MA60":
+                ma_ref_1 = ma60_s.iloc[-2] if len(ma60_s) >= 2 else np.nan
+                reversal_loose = (c0 > h1) or (
+                    not pd.isna(ma_ref_1) and c0 > ma60_0 and c1 < ma_ref_1
+                )
+            else:
+                reversal_loose = (c0 > h1) or (
+                    not pd.isna(ma20_1) and c0 > ma20_0 and c1 < ma20_1
+                )
             reversal_strict = (c0 > h1)
-            reversal_loose  = reversal_strict or (
-                not pd.isna(ma20_1) and c0 > ma20_0 and c1 < ma20_1
-            )
             passed_reversal = reversal_strict if strict else reversal_loose
             if not passed_reversal:
                 continue
             funnel["⑥ 止跌轉折"] += 1
 
             # 第一波拉回
-            # 正確邏輯：從 M 日高點之後到昨天，股價有沒有曾回到拉回區間過
-            # 若沒有 → 這是高點後第一次回落到均線附近 → ✅ 首波
-            # 若有   → 已不是首波 → —
-            ma_ref_series = ma20_s if pullback_ma == 20 else ma60_s
+            ma_ref_series = ma60_s if pullback_mode == "回踩MA60" else ma20_s
             try:
                 peak_idx = h.iloc[-M:].idxmax()
                 peak_pos = df.index.get_loc(peak_idx)
@@ -888,20 +933,40 @@ def main():
         high_window   = st.slider("新高窗口 M（天）", 20, 120, 60, 5)
         st.divider()
 
-        st.markdown("**③ 波段拉回**")
-        pullback_type = st.radio(
-            "拉回基準均線",
-            ["小拉回 MA20", "大拉回 MA60"],
-            index=0, horizontal=True,
-            help="MA20：短波段拉回（10~30天）；MA60：大波段拉回（季線級別）"
+        st.markdown("**③ 波段拉回 — 買點模式**")
+        pullback_mode = st.radio(
+            "買點模式",
+            ["回踩MA20", "回踩MA60", "站回MA5", "站回MA10"],
+            index=0, horizontal=False,
+            help=(
+                "回踩MA20：今收在MA20上方0~上限%（短波段標準買點）\n"
+                "回踩MA60：今收在MA60上方0~上限%（大波段季線買點）\n"
+                "站回MA5：昨收<MA5，今收>MA5（剛站回，最甜買點）\n"
+                "站回MA10：昨收<MA10，今收>MA10（剛站回10日線）"
+            )
         )
-        pullback_ma = 20 if "MA20" in pullback_type else 60
-        pullback_lower = 0.0  # 固定下限為 0：只找站在均線上方的股票
+
+        # 距離上限：所有模式都用（MA5/MA10模式以MA20為前提距離門檻）
         pullback_upper = st.slider(
-            "均線上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
-            help="股價站在均線上幾%以內才算拉回。例如 8% = 股價距 MA20 不超過 8%（回踩均線附近）"
+            "距 MA20 上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
+            help=(
+                "回踩MA20/MA60：今收距所選均線不超過此值\n"
+                "站回MA5/MA10：同時要求今收距MA20不超過此值（確保還在均線附近，非亂彈）"
+            )
         )
-        st.caption(f"📐 篩選範圍：{'MA20' if pullback_ma==20 else 'MA60'} 距離 0% ～ +{pullback_upper:.1f}%（站在均線上方）")
+
+        # 從模式推導 pullback_ma（供後續斜率判斷用）
+        if pullback_mode == "回踩MA60":
+            pullback_ma = 60
+        else:
+            pullback_ma = 20
+        pullback_lower = 0.0
+
+        if pullback_mode in ("回踩MA20", "回踩MA60"):
+            st.caption(f"📐 今收在 {'MA20' if pullback_ma==20 else 'MA60'} 上方 0% ～ +{pullback_upper:.1f}%")
+        else:
+            ma_label = "MA5" if pullback_mode == "站回MA5" else "MA10"
+            st.caption(f"📐 昨收 < {ma_label}，今收 > {ma_label}，且今收距MA20 ≤ {pullback_upper:.1f}%")
 
         st.markdown("**③+ 回踩確認**")
         touch_enabled = st.toggle("啟用回踩確認", value=True,
@@ -918,12 +983,13 @@ def main():
             touch_tol    = 3.0
         st.divider()
 
-        st.markdown("**④ MA20 斜率（均線方向）**")
+        st.markdown("**④ 均線斜率（均線方向）**")
+        slope_label = "MA60 近10日" if pullback_mode == "回踩MA60" else "MA20 近5日"
         ma20_slope_min = st.slider(
-            "MA20 近5日最小斜率", -5.0, 5.0, -0.5, 0.1,
-            help="近5日 MA20 變化量。正值=嚴格要求向上；-0.5=允許略微盤整；負值越大越寬鬆"
+            f"{slope_label} 最小斜率", -5.0, 5.0, -0.5, 0.1,
+            help="均線變化量。正值=嚴格要求向上；-0.5=允許略微盤整；負值越大越寬鬆\n選MA60時自動改檢查MA60斜率"
         )
-        st.caption("📐 < 門檻則視為均線崩跌，排除")
+        st.caption(f"📐 {slope_label} 斜率 < 門檻則視為均線崩跌，排除")
         st.divider()
 
         st.markdown("**⑤ 量縮比例**")
@@ -982,6 +1048,7 @@ def main():
     #  └────────────────────────────────────────────┘
     # ════════════════════════════════════════════════
     params = dict(momentum_days=momentum_days, high_window=high_window,
+                  pullback_mode=pullback_mode,
                   pullback_ma=pullback_ma, pullback_lower=pullback_lower, pullback_upper=pullback_upper,
                   vol_ratio=vol_ratio, min_rr=min_rr, ma20_slope_min=ma20_slope_min,
                   touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
