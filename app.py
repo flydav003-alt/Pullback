@@ -700,15 +700,25 @@ def run_filter(
             except Exception:
                 first = False  # 無法判斷時保守標為非首波
 
-            # ── 停損：近 10 日擺動低點下方 2%（最多允許跌 10%）──
-            # 貼近實際低點，不再用 ATR 混合計算導致停損漂移
-            swing_low = l.iloc[-10:].min()
-            stop      = swing_low * 0.98
-            stop      = max(stop, c0 * 0.90)   # 極低流動性股保護上限
+            # ── 停損：兩層合併（結構前低 + 均線），ATR緩衝 ──
+            atr_buf_mult = p.get("atr_buf", 0.5)
+            buf          = atr_0 * atr_buf_mult
 
-            target = max(c0 * 1.20, h.iloc[-M:].max() * 1.02)
+            swing_low     = l.iloc[-10:].min()
+            stop_structure = swing_low - buf                      # 前低下方一個緩衝
+            stop_ma        = ma_ref - buf                         # 所選均線下方一個緩衝
+            stop           = max(stop_structure, stop_ma)         # 取較高（較緊）
+            stop           = max(stop, c0 * 0.90)                 # 硬上限：最多虧10%
+
+            # ── 止盈：斐波那契延伸（1.272 保守 / 1.618 波段目標）──
+            swing_high = h.iloc[-M:].max()
+            amp        = swing_high - swing_low
+            target_t1  = round(swing_high + amp * 0.272, 2)      # 1.272 延伸
+            target_t2  = round(swing_high + amp * 0.618, 2)      # 1.618 延伸
+
+            # RR 用保守目標 T1 計算，不高估
             risk   = c0 - stop
-            reward = target - c0
+            reward = target_t1 - c0
             rr     = round(reward / risk, 2) if risk > 0 else 0.0
             if rr < p["min_rr"]:
                 continue
@@ -737,7 +747,8 @@ def run_filter(
                 "MA20斜率(5日)": round(slope_val, 3),
                 "距高點天數":    days_from_high,
                 "停損價":        round(stop, 2),
-                "目標價":        round(target, 2),
+                "目標T1(1.272)": target_t1,
+                "目標T2(1.618)": target_t2,
                 "損益比(RR)":    rr,
                 "首波拉回":      "✅" if first else "—",
                 "MA20":          round(ma20_0, 2),
@@ -759,7 +770,8 @@ def run_filter(
 # ==============================================================================
 def kline(df: pd.DataFrame, sid: str,
           stop_price: float | None = None,
-          target_price: float | None = None) -> go.Figure:
+          target_t1: float | None = None,
+          target_t2: float | None = None) -> go.Figure:
     df = df.copy().sort_index().tail(250)
     df["MA5"]   = sma(df["Close"], 5)
     df["MA10"]  = sma(df["Close"], 10)
@@ -806,13 +818,21 @@ def kline(df: pd.DataFrame, sid: str,
             annotation_position="bottom right",
             annotation_font=dict(color="#ef4444", size=10),
         )
-    if target_price is not None:
+    if target_t1 is not None:
         fig.add_hline(
-            y=target_price, row=1, col=1,
+            y=target_t1, row=1, col=1,
             line=dict(color="#22c55e", width=1.5, dash="dot"),
-            annotation_text=f"🎯 目標 {target_price:.2f}",
+            annotation_text=f"🎯 T1(1.272) {target_t1:.2f}",
             annotation_position="top right",
             annotation_font=dict(color="#22c55e", size=10),
+        )
+    if target_t2 is not None:
+        fig.add_hline(
+            y=target_t2, row=1, col=1,
+            line=dict(color="#a78bfa", width=1.5, dash="dash"),
+            annotation_text=f"🚀 T2(1.618) {target_t2:.2f}",
+            annotation_position="top right",
+            annotation_font=dict(color="#a78bfa", size=10),
         )
 
     fig.update_layout(
@@ -1002,8 +1022,12 @@ def main():
             help="預設放寬至 1.0（量不放大即可）；寬鬆模式下再×1.3")
         st.divider()
 
-        st.markdown("**⑥ 損益比門檻**")
-        min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5)
+        st.markdown("**⑥ 損益比門檻 & 停損緩衝**")
+        min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5,
+            help="損益比低於此值的股票不顯示。RR=1.5 代表潛在獲利是潛在虧損的1.5倍")
+        atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 1.5, 0.5, 0.1,
+            help="停損線 = 前低（或均線）再往下 N 倍ATR。倍數越大停損越寬，越不容易被假跌破洗出去。預設0.5")
+        st.caption(f"📐 停損緩衝 = ATR(14) × {atr_buf}；均線與前低取較高者為停損")
         st.divider()
 
         st.markdown("### 📋 股票池")
@@ -1056,7 +1080,8 @@ def main():
                   pullback_mode=pullback_mode,
                   pullback_ma=pullback_ma, pullback_lower=pullback_lower, pullback_upper=pullback_upper,
                   use_ma5=use_ma5, use_ma10=use_ma10,
-                  vol_ratio=vol_ratio, min_rr=min_rr, ma20_slope_min=ma20_slope_min,
+                  vol_ratio=vol_ratio, min_rr=min_rr, atr_buf=atr_buf,
+                  ma20_slope_min=ma20_slope_min,
                   touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
 
     # Step A：有按「抓取」按鈕 → 打 FinMind，存入 session_state
@@ -1123,7 +1148,7 @@ def main():
             disp = [
                 "代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
                 "量縮比","今日量/均量","MA20斜率(5日)","距高點天數",
-                "停損價","目標價","損益比(RR)","首波拉回",
+                "停損價","目標T1(1.272)","目標T2(1.618)","損益比(RR)","首波拉回",
             ]
             st.dataframe(
                 result_df[disp],
@@ -1143,7 +1168,10 @@ def main():
                     "距高點天數":    st.column_config.NumberColumn("距高點天", format="%d天",
                                         help="距 M 日高點的天數；越小表示型態越新鮮"),
                     "停損價":        st.column_config.NumberColumn("停損", format="%.2f"),
-                    "目標價":        st.column_config.NumberColumn("目標", format="%.2f"),
+                    "目標T1(1.272)": st.column_config.NumberColumn("目標T1", format="%.2f",
+                                        help="斐波那契1.272延伸，保守止盈目標，RR以此計算"),
+                    "目標T2(1.618)": st.column_config.NumberColumn("目標T2", format="%.2f",
+                                        help="斐波那契1.618延伸，波段核心目標"),
                     "損益比(RR)":    st.column_config.NumberColumn("RR", format="%.2f"),
                     "首波拉回":      st.column_config.TextColumn("首波", width="small"),
                 },
@@ -1172,15 +1200,17 @@ def main():
                 st.plotly_chart(
                     kline(data[sid], sid,
                           stop_price=result_df.iloc[idx]["停損價"],
-                          target_price=result_df.iloc[idx]["目標價"]),
+                          target_t1=result_df.iloc[idx]["目標T1(1.272)"],
+                          target_t2=result_df.iloc[idx]["目標T2(1.618)"]),
                     use_container_width=True,
                 )
                 row = result_df.iloc[idx]
-                ka, kb, kc, kd = st.columns(4)
+                ka, kb, kc, kd, ke = st.columns(5)
                 with ka: st.metric("收盤", f"${row['收盤價']:.2f}", delta=f"{row['漲跌幅(%)']:.2f}%")
                 with kb: st.metric("停損", f"${row['停損價']:.2f}")
-                with kc: st.metric("目標", f"${row['目標價']:.2f}")
-                with kd: st.metric("RR",  f"{row['損益比(RR)']:.2f}x")
+                with kc: st.metric("目標T1", f"${row['目標T1(1.272)']:.2f}")
+                with kd: st.metric("目標T2", f"${row['目標T2(1.618)']:.2f}")
+                with ke: st.metric("RR",  f"{row['損益比(RR)']:.2f}x")
 
     else:
         # 尚無資料
