@@ -70,14 +70,19 @@ header[data-testid="stHeader"] {
 
 /* 🔒 完全隱藏右上角 Share / Deploy / ⋮ 工具列 */
 [data-testid="stToolbar"],
+[data-testid="stToolbar"] *,
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"],
-#MainMenu {
-    display: none !important;
-    visibility: hidden !important;
-}
-/* 同時把 header 高度壓到最低，讓內容不空太多 */
-[data-testid="stHeader"] { height: 0 !important; min-height: 0 !important; }
+#MainMenu,
+header { display: none !important; visibility: hidden !important; height: 0 !important; }
+
+/* Header 歸零，讓主內容貼頂 */
+[data-testid="stHeader"] { height: 0 !important; min-height: 0 !important; padding: 0 !important; }
+/* 移除 Streamlit 自動為 fixed header 預留的 top padding */
+.stApp { padding-top: 0 !important; }
+[data-testid="stAppViewBlockContainer"],
+[data-testid="stMain"] > div:first-child,
+section[data-testid="stMain"] { padding-top: 0 !important; }
 
 /* main content 區塊 */
 [data-testid="stMain"],
