@@ -62,19 +62,34 @@ html, body { background-color: #0a0e1a !important; }
 
 /* ⚠️ 頂部 toolbar / header（白色條的主因）*/
 [data-testid="stHeader"],
-[data-testid="stToolbar"],
 header[data-testid="stHeader"] {
     background-color: #0a0e1a !important;
     background: #0a0e1a !important;
     border-bottom: 1px solid rgba(59,130,246,0.12) !important;
 }
 
+/* 🔒 完全隱藏右上角 Share / Deploy / ⋮ 工具列 */
+[data-testid="stToolbar"],
+[data-testid="stToolbar"] *,
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+#MainMenu,
+header { display: none !important; visibility: hidden !important; height: 0 !important; }
+
+/* Header 歸零，讓主內容貼頂 */
+[data-testid="stHeader"] { height: 0 !important; min-height: 0 !important; padding: 0 !important; }
+/* 移除 Streamlit 自動為 fixed header 預留的 top padding */
+.stApp { padding-top: 0 !important; }
+[data-testid="stAppViewBlockContainer"],
+[data-testid="stMain"] > div:first-child,
+section[data-testid="stMain"] { padding-top: 0 !important; }
+
 /* main content 區塊 */
 [data-testid="stMain"],
 [data-testid="block-container"],
 .main .block-container {
     background-color: #0a0e1a !important;
-    padding-top: 1.5rem !important;
+    padding-top: 0.5rem !important;
     max-width: 100% !important;
 }
 
@@ -1125,13 +1140,24 @@ def main():
         prev_cnt = total  # 初始母數為整個股票池
         for i, (cname, cnt) in enumerate(funnel.items()):
             pct_rel = cnt / prev_cnt * 100 if prev_cnt else 0
-            label   = f"{cnt}/{prev_cnt}" if i > 0 else f"{cnt}/{total}"
+            delta_txt = f"{pct_rel:.0f}% 通過" if i > 0 else f"{pct_rel:.0f}%（總池）"
+            arrow     = "↑" if pct_rel >= 50 else "↓"
+            clr = "#22c55e" if pct_rel >= 70 else "#fbbf24" if pct_rel >= 40 else "#f87171"
             with fcols[i]:
-                st.metric(
-                    cname,
-                    f"{cnt} 檔",
-                    delta=f"{pct_rel:.0f}% 通過" if i > 0 else f"{pct_rel:.0f}%（總池）",
-                )
+                st.markdown(f"""
+                <div style="background:#0f1e33;border:1px solid rgba(59,130,246,0.2);
+                            border-radius:10px;padding:10px 10px 9px;text-align:center;
+                            min-height:82px;display:flex;flex-direction:column;
+                            justify-content:center;gap:3px;">
+                    <div style="color:#64748b;font-size:0.65rem;text-transform:uppercase;
+                                letter-spacing:0.05em;line-height:1.3;">{cname}</div>
+                    <div style="color:#e2e8f0;font-family:'JetBrains Mono',monospace;
+                                font-size:1.05rem;font-weight:700;line-height:1.2;">{cnt} 檔</div>
+                    <div style="color:{clr};font-size:0.68rem;font-weight:600;">
+                        {arrow} {delta_txt}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
             prev_cnt = cnt
 
         bottleneck = min(funnel, key=funnel.get)
