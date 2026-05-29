@@ -734,7 +734,7 @@ def run_filter(
                 "拉回深度(%)":   round(dist, 2),
                 "量縮比":        round(vs, 2),
                 "今日量/均量":   vol_today_ratio,
-                "MA20斜率(5日)": round(ma20_slope, 3),
+                "MA20斜率(5日)": round(slope_val, 3),
                 "距高點天數":    days_from_high,
                 "停損價":        round(stop, 2),
                 "目標價":        round(target, 2),
