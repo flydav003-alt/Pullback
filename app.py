@@ -401,6 +401,9 @@ def build_name_map(s: str) -> dict[str, str]:
 DEFAULT_STOCK_IDS = extract_stock_ids(STOCK_STRING)
 STOCK_NAME_MAP = build_name_map(STOCK_STRING)
 
+# K 線分析網址（帶入 ?stock=代號 可自動填入並分析）
+KLINE_BASE_URL = "https://flydav003-alt.github.io/k-line/"
+
 # ==============================================================================
 # ── 3. FinMind API
 # ==============================================================================
@@ -1146,8 +1149,13 @@ def main():
             st.warning("⚠️ 無符合個股。請看上方漏斗找瓶頸，或切換寬鬆模式。")
         else:
             st.markdown(f"### 📋 篩選結果 — {len(result_df)} 檔（依 RR 降序）")
+            # 加入 K 線連結欄位
+            result_df = result_df.copy()
+            result_df["K線分析"] = result_df["代號"].apply(
+                lambda sid: f"{KLINE_BASE_URL}?stock={sid}"
+            )
             disp = [
-                "代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
+                "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
                 "量縮比","今日量/均量","MA20斜率(5日)","距高點天數",
                 "停損價","目標T1(1.272)","目標T2(1.618)","損益比(RR)","首波拉回",
             ]
@@ -1156,6 +1164,12 @@ def main():
                 use_container_width=True,
                 height=min(580, 45 + 38*len(result_df)),
                 column_config={
+                    "K線分析":       st.column_config.LinkColumn(
+                                        "K線🔗",
+                                        display_text="📈 分析",
+                                        width="small",
+                                        help="點擊開啟 K 線分析，自動帶入代號",
+                                    ),
                     "代號":          st.column_config.TextColumn("代號", width="small"),
                     "名稱":          st.column_config.TextColumn("名稱", width="small"),
                     "收盤價":        st.column_config.NumberColumn("收盤", format="%.2f"),
@@ -1198,6 +1212,24 @@ def main():
             sid = result_df.iloc[idx]["代號"]
 
             if sid in data:
+                # ── K 線進階分析超連結 ──
+                stock_name = STOCK_NAME_MAP.get(sid, "")
+                kline_url  = f"{KLINE_BASE_URL}?stock={sid}"
+                st.markdown(
+                    f"""<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+                        <span style="font-family:monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0;">{sid} {stock_name}</span>
+                        <a href="{kline_url}" target="_blank" rel="noopener"
+                           style="display:inline-flex;align-items:center;gap:6px;
+                                  background:linear-gradient(135deg,#1d4ed8,#1e40af);
+                                  color:#fff;text-decoration:none;font-size:0.82rem;font-weight:600;
+                                  padding:6px 14px;border-radius:6px;
+                                  border:1px solid rgba(96,165,250,0.4);
+                                  transition:opacity .15s;">
+                            📈 進階 K 線分析 &nbsp;↗
+                        </a>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
                 st.plotly_chart(
                     kline(data[sid], sid,
                           stop_price=result_df.iloc[idx]["停損價"],
