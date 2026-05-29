@@ -539,6 +539,7 @@ def run_filter(
         "① 長線多頭": 0,
         "② 動能記憶": 0,
         "③ 波段拉回": 0,
+        "③+ 回踩確認": 0,
         "④ MA20斜率": 0,
         "⑤ 量縮洗盤": 0,
         "⑥ 止跌轉折": 0,
@@ -593,6 +594,22 @@ def run_filter(
             if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
                 continue
             funnel["③ 波段拉回"] += 1
+
+            # ③+ 回踩確認（可選）
+            # 近 touch_window 日內，至少一根 Low <= ma_ref * (1 + touch_tol/100)
+            # touch_tol=3% 表示 Low 曾進入均線以上 3% 以內（含跌破）即算回踩
+            touch_enabled = p.get("touch_enabled", True)
+            if touch_enabled:
+                touch_window = p.get("touch_window", 5)
+                touch_tol    = p.get("touch_tol", 3.0)
+                ma_ref_series = ma20_s if pullback_ma == 20 else ma60_s
+                window_low  = l.iloc[-touch_window:]
+                window_ma   = ma_ref_series.iloc[-touch_window:]
+                touch_threshold = window_ma * (1 + touch_tol / 100)
+                touched = (window_low <= touch_threshold).any()
+                if not touched:
+                    continue
+            funnel["③+ 回踩確認"] += 1
 
             # ④ MA20 斜率（確保均線仍向上，拒絕均線崩跌中的回踩）
             ma20_slope = (ma20_s.iloc[-1] - ma20_s.iloc[-6]) if len(ma20_s) >= 6 else 0.0
@@ -845,7 +862,7 @@ def main():
         🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
         <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
         <strong>②動能記憶</strong>（近N日收盤曾突破前M日高，shift(1)修正）→
-        <strong>③波段拉回</strong>（Close≈MA20/MA60 下限~上限%）→
+        <strong>③波段拉回</strong>（Close 站在 MA20/MA60 上方 0~上限%，即均線回踩）→
         <strong>④MA20斜率</strong>（近5日MA20變化>門檻，確保均線仍向上）→
         <strong>⑤量縮洗盤</strong>（近3日量&lt;20日量×Y）→
         <strong>⑥止跌轉折</strong>（今收&gt;昨高 或 站回均線）
@@ -879,15 +896,26 @@ def main():
             help="MA20：短波段拉回（10~30天）；MA60：大波段拉回（季線級別）"
         )
         pullback_ma = 20 if "MA20" in pullback_type else 60
-        pullback_lower = st.slider(
-            "下限（股價低於均線 %）", -10.0, 0.0, -5.0, 0.5,
-            help="負值 = 股價跌破均線幾%。-5% 代表最多允許跌到均線以下 5%"
-        )
+        pullback_lower = 0.0  # 固定下限為 0：只找站在均線上方的股票
         pullback_upper = st.slider(
-            "上限（股價高於均線 %）", 0.0, 15.0, 10.0, 0.5,
-            help="正值 = 股價站在均線上幾%。10% 代表最多允許站在均線以上 10%"
+            "均線上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
+            help="股價站在均線上幾%以內才算拉回。例如 8% = 股價距 MA20 不超過 8%（回踩均線附近）"
         )
-        st.caption(f"📐 篩選範圍：{'MA20' if pullback_ma==20 else 'MA60'} 距離 {pullback_lower:+.1f}% ～ {pullback_upper:+.1f}%")
+        st.caption(f"📐 篩選範圍：{'MA20' if pullback_ma==20 else 'MA60'} 距離 0% ～ +{pullback_upper:.1f}%（站在均線上方）")
+
+        st.markdown("**③+ 回踩確認**")
+        touch_enabled = st.toggle("啟用回踩確認", value=True,
+            help="開啟後：要求近N日內Low曾貼近均線，確保真的發生過回踩動作，而非一直飄在均線上方")
+        st.caption("🟢 開啟 = 必須有回踩動作｜⚪ 關閉 = 只看今日位置")
+        if touch_enabled:
+            touch_window = st.slider("回踩偵測窗口（日）", 3, 20, 5, 1,
+                help="往回看幾天內有沒有發生回踩。5日=近一週；10日=近兩週")
+            touch_tol = st.slider("回踩容忍度（%）", 0.0, 5.0, 3.0, 0.5,
+                help="Low 距均線多近算回踩。3%=Low曾進入均線上方3%以內（含跌破均線）即算")
+            st.caption(f"📐 近 {touch_window} 日內，Low ≤ 均線 × (1 + {touch_tol:.1f}%)")
+        else:
+            touch_window = 5
+            touch_tol    = 3.0
         st.divider()
 
         st.markdown("**④ MA20 斜率（均線方向）**")
@@ -955,7 +983,8 @@ def main():
     # ════════════════════════════════════════════════
     params = dict(momentum_days=momentum_days, high_window=high_window,
                   pullback_ma=pullback_ma, pullback_lower=pullback_lower, pullback_upper=pullback_upper,
-                  vol_ratio=vol_ratio, min_rr=min_rr, ma20_slope_min=ma20_slope_min)
+                  vol_ratio=vol_ratio, min_rr=min_rr, ma20_slope_min=ma20_slope_min,
+                  touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
 
     # Step A：有按「抓取」按鈕 → 打 FinMind，存入 session_state
     if run_btn:
@@ -1092,7 +1121,7 @@ def main():
                         f"| 拉回基準 | **{'MA20' if pullback_ma==20 else 'MA60'}** |")
         with c2:
             st.markdown(f"| 參數 | 值 |\n|---|---|\n"
-                        f"| 拉回範圍 | **{pullback_lower:+.1f}% ～ {pullback_upper:+.1f}%** |\n"
+                        f"| 拉回範圍 | **0% ～ +{pullback_upper:.1f}%** |\n"
                         f"| 量縮比 Y | **{vol_ratio}** |\n"
                         f"| 最低 RR | **{min_rr}x** |\n"
                         f"| 股票池 | **{len(user_ids)}** 檔 |")
