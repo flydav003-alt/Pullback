@@ -7,6 +7,7 @@
 #       ⑤ 漏斗改為顯示相對前一關卡通過率
 #       ⑥ K 線圖標示停損 / 目標水平線
 #       ⑦ 資料抓取改用執行緒池並行（~30 秒，原 2 分鐘）
+#       ⑧ 側邊欄按鈕全客製化 (注入 ✨ 展開 / ✖ 摺疊 中文字)
 # ==============================================================================
 
 import re
@@ -50,295 +51,147 @@ st.markdown("""
    ═══════════════════════════════════════════════ */
 html, body { background-color: #0a0e1a !important; }
 
-/* 最外層 App 容器 */
-.stApp,
-.stApp > div,
-[data-testid="stAppViewContainer"],
-[data-testid="stAppViewContainer"] > section {
-    background-color: #0a0e1a !important;
-    background: #0a0e1a !important;
+.stApp, .stApp > div, [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > section {
+    background-color: #0a0e1a !important; background: #0a0e1a !important;
 }
 
-/* ⚠️ 頂部 toolbar / header
-   注意：必須拉高 z-index，否則會被 main content 蓋住導致按鈕消失 */
-[data-testid="stHeader"],
-header[data-testid="stHeader"] {
-    background-color: transparent !important;
-    background: transparent !important;
-    border-bottom: none !important;
-    z-index: 999999 !important; 
+[data-testid="stHeader"], header[data-testid="stHeader"] {
+    background-color: transparent !important; background: transparent !important;
+    border-bottom: none !important; z-index: 999999 !important; 
 }
 
-/* 🔒 只隱藏右上角不需要的工具列 (Deploy, Menu)，不破壞整個 header */
-.stAppDeployButton,
-[data-testid="stToolbarActions"],
-[data-testid="stStatusWidget"] { 
+.stAppDeployButton, [data-testid="stToolbarActions"], [data-testid="stStatusWidget"] { 
     display: none !important; 
 }
 
-/* ★ 確保展開/摺疊側邊欄的按鈕非常明顯且絕對可見 ★ */
+/* ==========================================================
+   ★ 側邊欄展開/摺疊按鈕全客製化 (取代原生英文與圖示) ★
+   ========================================================== */
+
+/* 1. 左上角「展開」按鈕 */
 [data-testid="collapsedControl"] {
     display: flex !important;
     visibility: visible !important;
-    background-color: rgba(59, 130, 246, 0.15) !important;
+    background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
     border-radius: 8px !important;
-    margin: 10px !important;
+    margin: 15px !important;
+    padding: 8px 24px !important;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
     z-index: 9999999 !important;
-}
-[data-testid="collapsedControl"] svg {
-    fill: #60a5fa !important;
+    transition: all 0.3s ease !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: auto !important;
 }
 [data-testid="collapsedControl"]:hover {
-    background-color: rgba(59, 130, 246, 0.35) !important;
+    background: linear-gradient(135deg, #2563eb, #60a5fa) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.6) !important;
 }
-
-/* 控制主畫面的留白，避免標題被 Header 遮擋，同時也不要蓋住 Header */
-.block-container {
-    padding-top: 3rem !important; 
-    padding-bottom: 2rem !important;
+/* 隱藏原生箭頭 */
+[data-testid="collapsedControl"] svg {
+    display: none !important;
 }
-
-/* main content 區塊 */
-[data-testid="stMain"],
-[data-testid="block-container"],
-.main .block-container {
-    background-color: #0a0e1a !important;
-    max-width: 100% !important;
-}
-
-/* 全域文字 */
-html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4 {
+/* 注入發亮中文 */
+[data-testid="collapsedControl"]::after {
+    content: "✨ 展開" !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+    letter-spacing: 2px !important;
     font-family: 'Noto Sans TC', sans-serif !important;
-    color: #e2e8f0;
 }
 
-/* ── Sidebar ── */
-[data-testid="stSidebar"],
-[data-testid="stSidebar"] > div {
-    background: #0d1829 !important;
-    border-right: 1px solid rgba(59,130,246,0.15) !important;
+/* 2. 側邊欄內的「摺疊」按鈕 */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarHeader"] button {
+    background: rgba(239, 68, 68, 0.15) !important;
+    border-radius: 6px !important;
+    padding: 6px 16px !important;
+    width: auto !important;
+    transition: all 0.2s !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
 }
-/* 讓側邊欄內容強制置頂 */
-[data-testid="stSidebarUserContent"] {
-    padding-top: 0 !important;
+[data-testid="stSidebarCollapseButton"]:hover,
+[data-testid="stSidebarHeader"] button:hover {
+    background: rgba(239, 68, 68, 0.4) !important;
 }
+/* 隱藏原生圖示/英文 */
+[data-testid="stSidebarCollapseButton"] svg,
+[data-testid="stSidebarHeader"] button svg {
+    display: none !important;
+}
+/* 注入紅色中文 */
+[data-testid="stSidebarCollapseButton"]::after,
+[data-testid="stSidebarHeader"] button::after {
+    content: "✖ 摺疊" !important;
+    color: #f87171 !important;
+    font-weight: 700 !important;
+    font-size: 0.95rem !important;
+    letter-spacing: 1px !important;
+    font-family: 'Noto Sans TC', sans-serif !important;
+}
+/* ========================================================== */
 
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] div {
-    color: #cbd5e1 !important;
-}
-[data-testid="stSidebar"] .stMarkdown h3 {
-    color: #60a5fa !important;
-    font-size: 0.85rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    border-bottom: 1px solid rgba(59,130,246,0.2);
-    padding-bottom: 6px;
-    margin-top: 4px;
-}
+.block-container { padding-top: 3rem !important; padding-bottom: 2rem !important; }
+[data-testid="stMain"], [data-testid="block-container"], .main .block-container { background-color: #0a0e1a !important; max-width: 100% !important; }
+html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4 { font-family: 'Noto Sans TC', sans-serif !important; color: #e2e8f0; }
 
-/* ── Slider ── */
+[data-testid="stSidebar"], [data-testid="stSidebar"] > div { background: #0d1829 !important; border-right: 1px solid rgba(59,130,246,0.15) !important; }
+[data-testid="stSidebarUserContent"] { padding-top: 0 !important; }
+[data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label, [data-testid="stSidebar"] div { color: #cbd5e1 !important; }
+[data-testid="stSidebar"] .stMarkdown h3 { color: #60a5fa !important; font-size: 0.85rem !important; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 1px solid rgba(59,130,246,0.2); padding-bottom: 6px; margin-top: 4px; }
+
 [data-testid="stSlider"] label { color: #94a3b8 !important; font-size: 0.82rem !important; }
 [data-testid="stSlider"] p { color: #60a5fa !important; font-weight: 700 !important; }
-
-/* ── Radio ── */
 [data-testid="stRadio"] label { color: #94a3b8 !important; }
 [data-testid="stRadio"] div[role="radiogroup"] p { color: #e2e8f0 !important; }
 
-/* ── TextArea ── */
-textarea {
-    background-color: #0f1c30 !important;
-    color: #e2e8f0 !important;
-    border: 1px solid rgba(59,130,246,0.25) !important;
-    border-radius: 8px !important;
-}
-
-/* ── Caption / small text ── */
-[data-testid="stCaptionContainer"] p,
-small, .stCaption { color: #64748b !important; }
-
-/* ── Divider ── */
+textarea { background-color: #0f1c30 !important; color: #e2e8f0 !important; border: 1px solid rgba(59,130,246,0.25) !important; border-radius: 8px !important; }
+[data-testid="stCaptionContainer"] p, small, .stCaption { color: #64748b !important; }
 hr { border-color: rgba(59,130,246,0.15) !important; margin: 10px 0 !important; }
 
-/* ── Button ── */
-.stButton > button {
-    background: linear-gradient(135deg, #1d4ed8, #1e40af) !important;
-    color: #fff !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    padding: 10px 24px !important;
-    width: 100% !important;
-    transition: all 0.2s ease !important;
-}
-.stButton > button:hover {
-    background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 15px rgba(59,130,246,0.35) !important;
-}
+.stButton > button { background: linear-gradient(135deg, #1d4ed8, #1e40af) !important; color: #fff !important; border: none !important; border-radius: 8px !important; font-weight: 600 !important; padding: 10px 24px !important; width: 100% !important; transition: all 0.2s ease !important; }
+.stButton > button:hover { background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; transform: translateY(-1px) !important; box-shadow: 0 4px 15px rgba(59,130,246,0.35) !important; }
 
-/* ── Progress bar ── */
 [data-testid="stProgressBar"] > div { background: rgba(59,130,246,0.15) !important; border-radius: 4px; }
 [data-testid="stProgressBar"] > div > div { background: linear-gradient(90deg,#3b82f6,#60a5fa) !important; }
-
-/* ── DataFrame ── */
-[data-testid="stDataFrame"] {
-    border: 1px solid rgba(59,130,246,0.18) !important;
-    border-radius: 10px !important;
-}
-
-/* ── Warning / Info ── */
+[data-testid="stDataFrame"] { border: 1px solid rgba(59,130,246,0.18) !important; border-radius: 10px !important; }
 [data-testid="stAlert"] { border-radius: 8px !important; }
 
-/* ── Selectbox 選單本體 ── */
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
-    background-color: #0f1c30 !important;
-    border-color: rgba(59,130,246,0.25) !important;
-    color: #e2e8f0 !important;
-}
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div { background-color: #0f1c30 !important; border-color: rgba(59,130,246,0.25) !important; color: #e2e8f0 !important; }
+body [data-baseweb="popover"], body [data-baseweb="menu"], body ul[role="listbox"] { background-color: #1e293b !important; border: 1px solid rgba(59,130,246,0.3) !important; }
+body [data-baseweb="menu"] li, body [data-baseweb="list-item"], body ul[role="listbox"] li, body [role="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
+body [role="option"]:hover, body [data-baseweb="menu"] li:hover { background-color: #2d4a7a !important; color: #ffffff !important; }
+body [aria-selected="true"][role="option"] { background-color: #1d4ed8 !important; color: #ffffff !important; }
 
-/* ── Selectbox 下拉選單字色修正 ──
-   Streamlit 把 popover 渲染在 body 最外層（portal），
-   需要直接針對 body 下的 baseweb 元件覆蓋 */
-body [data-baseweb="popover"],
-body [data-baseweb="menu"],
-body ul[role="listbox"] {
-    background-color: #1e293b !important;
-    border: 1px solid rgba(59,130,246,0.3) !important;
-}
-body [data-baseweb="menu"] li,
-body [data-baseweb="list-item"],
-body ul[role="listbox"] li,
-body [role="option"] {
-    background-color: #1e293b !important;
-    color: #e2e8f0 !important;
-}
-body [role="option"]:hover,
-body [data-baseweb="menu"] li:hover {
-    background-color: #2d4a7a !important;
-    color: #ffffff !important;
-}
-body [aria-selected="true"][role="option"] {
-    background-color: #1d4ed8 !important;
-    color: #ffffff !important;
-}
+body [data-baseweb="tooltip"], body [role="tooltip"], div[data-baseweb="tooltip"] div, [data-testid="stTooltipHoverTarget"] + div, body [class*="Tooltip"], body [class*="tooltip"] { background-color: #1e293b !important; color: #e2e8f0 !important; border: 1px solid rgba(59,130,246,0.35) !important; border-radius: 6px !important; font-size: 0.82rem !important; box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important; }
+body [data-baseweb="tooltip"] [data-popper-arrow]::before, body [role="tooltip"] [data-popper-arrow]::before { border-color: #1e293b !important; }
 
-/* ── Tooltip（問號 hover）──
-   同樣是 portal 渲染在 body 最外層，需從 body 選取 */
-body [data-baseweb="tooltip"],
-body [role="tooltip"],
-div[data-baseweb="tooltip"] div,
-[data-testid="stTooltipHoverTarget"] + div,
-body [class*="Tooltip"],
-body [class*="tooltip"] {
-    background-color: #1e293b !important;
-    color: #e2e8f0 !important;
-    border: 1px solid rgba(59,130,246,0.35) !important;
-    border-radius: 6px !important;
-    font-size: 0.82rem !important;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important;
-}
-/* tooltip 箭頭 */
-body [data-baseweb="tooltip"] [data-popper-arrow]::before,
-body [role="tooltip"] [data-popper-arrow]::before {
-    border-color: #1e293b !important;
-}
-
-/* ════════════════════════════════════════════════
-   自訂元件樣式
-   ════════════════════════════════════════════════ */
-
-/* 英雄標題 */
-.hero-header {
-    background: linear-gradient(120deg, #1a2744 0%, #162038 45%, #1e1035 100%);
-    border: 1px solid rgba(59,130,246,0.28);
-    border-radius: 16px;
-    padding: 26px 34px;
-    margin-bottom: 18px;
-    position: relative;
-    overflow: hidden;
-}
-.hero-header::before {
-    content: '';
-    position: absolute;
-    top: -50px; right: -50px;
-    width: 180px; height: 180px;
-    background: radial-gradient(circle, rgba(59,130,246,0.18) 0%, transparent 70%);
-    border-radius: 50%;
-    pointer-events: none;
-}
-.hero-title {
-    font-size: 2rem;
-    font-weight: 900;
-    background: linear-gradient(90deg, #60a5fa 0%, #f87171 55%, #fbbf24 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    margin: 0 0 6px 0;
-}
+.hero-header { background: linear-gradient(120deg, #1a2744 0%, #162038 45%, #1e1035 100%); border: 1px solid rgba(59,130,246,0.28); border-radius: 16px; padding: 26px 34px; margin-bottom: 18px; position: relative; overflow: hidden; }
+.hero-header::before { content: ''; position: absolute; top: -50px; right: -50px; width: 180px; height: 180px; background: radial-gradient(circle, rgba(59,130,246,0.18) 0%, transparent 70%); border-radius: 50%; pointer-events: none; }
+.hero-title { font-size: 2rem; font-weight: 900; background: linear-gradient(90deg, #60a5fa 0%, #f87171 55%, #fbbf24 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 6px 0; }
 .hero-subtitle { color: #94a3b8 !important; font-size: 0.9rem; margin: 0; }
 
-/* 排程狀態卡 */
-.sched-card {
-    background: #0f1e33;
-    border: 1px solid rgba(34,197,94,0.28);
-    border-radius: 10px;
-    padding: 12px 16px;
-    height: 70px;
-}
+.sched-card { background: #0f1e33; border: 1px solid rgba(34,197,94,0.28); border-radius: 10px; padding: 12px 16px; height: 70px; }
 .sched-card.warn { border-color: rgba(251,191,36,0.38); }
 .sched-lbl { color: #475569; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
 .sched-val { color: #e2e8f0; font-family: 'JetBrains Mono', monospace; font-size: 0.92rem; font-weight: 600; }
 .sched-val.green { color: #22c55e; }
 .sched-val.amber { color: #fbbf24; }
 
-/* 策略說明欄 */
-.strat-info {
-    background: linear-gradient(135deg, #172035, #1c2a48);
-    border-left: 3px solid #3b82f6;
-    border-radius: 8px;
-    padding: 14px 18px;
-    margin-bottom: 14px;
-    font-size: 0.86rem;
-    color: #94a3b8;
-    line-height: 1.75;
-}
+.strat-info { background: linear-gradient(135deg, #172035, #1c2a48); border-left: 3px solid #3b82f6; border-radius: 8px; padding: 14px 18px; margin-bottom: 14px; font-size: 0.86rem; color: #94a3b8; line-height: 1.75; }
 .strat-info strong { color: #60a5fa; }
 
-/* 條件漏斗分析卡 */
-.funnel-card {
-    background: #0f1e33;
-    border: 1px solid rgba(59,130,246,0.18);
-    border-radius: 10px;
-    padding: 14px 18px;
-    font-size: 0.83rem;
-}
-.funnel-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 5px 0;
-    border-bottom: 1px solid rgba(59,130,246,0.08);
-    color: #94a3b8;
-}
+.funnel-card { background: #0f1e33; border: 1px solid rgba(59,130,246,0.18); border-radius: 10px; padding: 14px 18px; font-size: 0.83rem; }
+.funnel-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(59,130,246,0.08); color: #94a3b8; }
 .funnel-row:last-child { border-bottom: none; }
 .funnel-pass { color: #22c55e; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
 .funnel-label { color: #64748b; font-size: 0.78rem; }
 
-/* 風險提醒 */
-.risk-warn {
-    background: linear-gradient(135deg, #1f1510, #2d1b0e);
-    border: 1px solid rgba(251,191,36,0.3);
-    border-radius: 8px;
-    padding: 12px 18px;
-    margin-top: 22px;
-    margin-bottom: 14px;
-    color: #fbbf24;
-    font-size: 0.8rem;
-    text-align: center;
-}
+.risk-warn { background: linear-gradient(135deg, #1f1510, #2d1b0e); border: 1px solid rgba(251,191,36,0.3); border-radius: 8px; padding: 12px 18px; margin-top: 22px; margin-bottom: 14px; color: #fbbf24; font-size: 0.8rem; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
