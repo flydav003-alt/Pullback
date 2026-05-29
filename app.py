@@ -40,7 +40,6 @@ TZ_TW = ZoneInfo("Asia/Taipei")
 
 # ==============================================================================
 # ── 1. 深色主題 CSS
-#    關鍵修正：強制覆蓋 Streamlit 的白色 header / toolbar / main block
 # ==============================================================================
 st.markdown("""
 <style>
@@ -60,7 +59,8 @@ html, body { background-color: #0a0e1a !important; }
     background: #0a0e1a !important;
 }
 
-/* ⚠️ 頂部 toolbar / header（白色條的主因）*/
+/* ⚠️ 頂部 toolbar / header（白色條的主因）
+   【修正】絕對不可 display:none，否則側邊欄拉回按鈕會消失 */
 [data-testid="stHeader"],
 header[data-testid="stHeader"] {
     background-color: #0a0e1a !important;
@@ -68,21 +68,28 @@ header[data-testid="stHeader"] {
     border-bottom: 1px solid rgba(59,130,246,0.12) !important;
 }
 
-/* 🔒 完全隱藏右上角 Share / Deploy / ⋮ 工具列 */
+/* 🔒 僅隱藏右上角 Share / Deploy / ⋮ 工具列，保留左上角按鈕 */
 [data-testid="stToolbar"],
 [data-testid="stToolbar"] *,
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"],
-#MainMenu,
-header { display: none !important; visibility: hidden !important; height: 0 !important; }
+#MainMenu { display: none !important; visibility: hidden !important; }
 
-/* 隱藏左側 Sidebar 展開收合按鈕 */
-[data-testid="collapsedControl"] { display: none !important; }
+/* 【新增】讓側邊欄的摺疊/展開按鈕變得超明顯 */
+button[kind="header"] {
+    color: #60a5fa !important;
+    background-color: rgba(59,130,246,0.15) !important;
+    border-radius: 6px !important;
+    margin: 4px !important;
+    padding: 2px !important;
+    transition: all 0.2s ease !important;
+}
+button[kind="header"]:hover {
+    background-color: rgba(59,130,246,0.3) !important;
+    color: #fff !important;
+}
 
-/* Header 歸零，讓主內容貼頂 */
-[data-testid="stHeader"] { height: 0 !important; min-height: 0 !important; padding: 0 !important; }
-
-/* 移除 Streamlit 自動為 fixed header 預留的 top padding，並利用 margin 大幅拉提消除白邊 */
+/* 【修正】調整頂部留白，避免標題被切掉 */
 .stApp { padding-top: 0 !important; }
 [data-testid="stAppViewBlockContainer"],
 [data-testid="stMain"] > div:first-child,
@@ -90,8 +97,8 @@ section[data-testid="stMain"] {
     padding-top: 0 !important; 
 }
 .block-container {
-    padding-top: 0.5rem !important;
-    margin-top: -3.5rem !important; /* 向上拉近，消除頂部多餘空間 */
+    padding-top: 2rem !important;     /* 留出空間給標題 */
+    margin-top: -1.2rem !important;   /* 減緩向上拉的幅度 */
 }
 
 /* main content 區塊 */
@@ -550,14 +557,6 @@ def atr(df: pd.DataFrame, w: int = 14) -> pd.Series:
 
 # ==============================================================================
 # ── 6. 篩選策略（含條件漏斗統計）
-#
-#  條件 ①~⑥（v3.2 新增 ④ MA20斜率）：
-#    ④ MA20 斜率：近5日 MA20 變化 >= ma20_slope_min
-#  「寬鬆模式」（strict=False）：
-#    ⑤ 量縮：放寬為 < vol_ratio * 1.3
-#    ⑥ 止跌轉折：今收 > 昨高  OR  今收站回 MA20（MA20 站回也算）
-#
-#  同時回傳各條件通過數，方便 UI 顯示漏斗分析
 # ==============================================================================
 def run_filter(
     data: dict[str, pd.DataFrame],
