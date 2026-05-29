@@ -59,37 +59,39 @@ html, body { background-color: #0a0e1a !important; }
     background: #0a0e1a !important;
 }
 
-/* ⚠️ 頂部 toolbar / header（白色條的主因）
-   【修正】絕對不可 display:none，否則側邊欄拉回按鈕會消失 */
+/* ⚠️ 頂部 toolbar / header
+   注意：不可隱藏整個 header，否則側邊欄的展開按鈕會消失 */
 [data-testid="stHeader"],
 header[data-testid="stHeader"] {
-    background-color: #0a0e1a !important;
-    background: #0a0e1a !important;
-    border-bottom: 1px solid rgba(59,130,246,0.12) !important;
+    background-color: transparent !important;
+    background: transparent !important;
+    border-bottom: none !important;
 }
 
-/* 🔒 僅隱藏右上角 Share / Deploy / ⋮ 工具列，保留左上角按鈕 */
+/* 🔒 完全隱藏右上角 Share / Deploy / ⋮ 工具列，但保留左側按鈕 */
 [data-testid="stToolbar"],
-[data-testid="stToolbar"] *,
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"],
-#MainMenu { display: none !important; visibility: hidden !important; }
-
-/* 【新增】讓側邊欄的摺疊/展開按鈕變得超明顯 */
-button[kind="header"] {
-    color: #60a5fa !important;
-    background-color: rgba(59,130,246,0.15) !important;
-    border-radius: 6px !important;
-    margin: 4px !important;
-    padding: 2px !important;
-    transition: all 0.2s ease !important;
-}
-button[kind="header"]:hover {
-    background-color: rgba(59,130,246,0.3) !important;
-    color: #fff !important;
+#MainMenu { 
+    display: none !important; 
+    visibility: hidden !important; 
 }
 
-/* 【修正】調整頂部留白，避免標題被切掉 */
+/* ★ 確保展開/摺疊側邊欄的按鈕非常明顯 ★ */
+[data-testid="collapsedControl"] {
+    background-color: rgba(59, 130, 246, 0.15) !important;
+    border-radius: 8px !important;
+    margin: 10px !important;
+    z-index: 999999 !important;
+}
+[data-testid="collapsedControl"] svg {
+    fill: #60a5fa !important;
+}
+[data-testid="collapsedControl"]:hover {
+    background-color: rgba(59, 130, 246, 0.35) !important;
+}
+
+/* 移除 Streamlit 自動為 fixed header 預留的 top padding，並自訂合理距離避免標題被切 */
 .stApp { padding-top: 0 !important; }
 [data-testid="stAppViewBlockContainer"],
 [data-testid="stMain"] > div:first-child,
@@ -97,8 +99,8 @@ section[data-testid="stMain"] {
     padding-top: 0 !important; 
 }
 .block-container {
-    padding-top: 2rem !important;     /* 留出空間給標題 */
-    margin-top: -1.2rem !important;   /* 減緩向上拉的幅度 */
+    padding-top: 3rem !important; /* 保留適當頂部空間，避免標題被上方蓋住 */
+    padding-bottom: 2rem !important;
 }
 
 /* main content 區塊 */
@@ -121,7 +123,7 @@ html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4 {
     background: #0d1829 !important;
     border-right: 1px solid rgba(59,130,246,0.15) !important;
 }
-/* 讓 Sidebar 內容置頂 */
+/* 讓側邊欄內容強制置頂 */
 [data-testid="stSidebarUserContent"] {
     padding-top: 0 !important;
 }
@@ -164,31 +166,6 @@ small, .stCaption { color: #64748b !important; }
 
 /* ── Divider ── */
 hr { border-color: rgba(59,130,246,0.15) !important; margin: 10px 0 !important; }
-
-/* ── Metric 卡片 (原樣式備用) ── */
-[data-testid="stMetric"] {
-    background: linear-gradient(135deg, #1e2d4a 0%, #162038 100%) !important;
-    border: 1px solid rgba(59,130,246,0.22) !important;
-    border-radius: 12px !important;
-    padding: 16px 20px !important;
-}
-[data-testid="stMetricLabel"] p,
-[data-testid="stMetric"] label {
-    color: #64748b !important;
-    font-size: 0.75rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-[data-testid="stMetricValue"] {
-    color: #f1f5f9 !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 1.8rem !important;
-    font-weight: 700 !important;
-}
-[data-testid="stMetricDelta"] {
-    color: #22c55e !important;
-    font-size: 0.82rem !important;
-}
 
 /* ── Button ── */
 .stButton > button {
@@ -557,6 +534,14 @@ def atr(df: pd.DataFrame, w: int = 14) -> pd.Series:
 
 # ==============================================================================
 # ── 6. 篩選策略（含條件漏斗統計）
+#
+#  條件 ①~⑥（v3.2 新增 ④ MA20斜率）：
+#    ④ MA20 斜率：近5日 MA20 變化 >= ma20_slope_min
+#  「寬鬆模式」（strict=False）：
+#    ⑤ 量縮：放寬為 < vol_ratio * 1.3
+#    ⑥ 止跌轉折：今收 > 昨高  OR  今收站回 MA20（MA20 站回也算）
+#
+#  同時回傳各條件通過數，方便 UI 顯示漏斗分析
 # ==============================================================================
 def run_filter(
     data: dict[str, pd.DataFrame],
@@ -952,6 +937,7 @@ def main():
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
+
     # ════════════════════════════════════════════════
     # SIDEBAR
     # ════════════════════════════════════════════════
@@ -1127,7 +1113,7 @@ def main():
 
         # ── 指標卡片 ──
         k1, k2, k3, k4 = st.columns(4)
-
+        
         def make_mini_card(title, val, extra=""):
             return f"""
             <div style="background:#0f1e33;border:1px solid rgba(59,130,246,0.2);
@@ -1143,7 +1129,7 @@ def main():
                 </div>
             </div>
             """
-
+            
         with k1:
             st.markdown(make_mini_card("📊 已載入", f"{ok:,} 檔"), unsafe_allow_html=True)
         with k2:
@@ -1153,7 +1139,6 @@ def main():
         with k4:
             delta_html = f"<span style='color:#22c55e;font-size:0.75rem;margin-left:8px;font-family:\"Noto Sans TC\",sans-serif;'>(RR≥{min_rr})</span>" if len(result_df) else ""
             st.markdown(make_mini_card("🎯 符合條件", f"{len(result_df):,} 檔", delta_html), unsafe_allow_html=True)
-
 
         st.divider()
 
@@ -1317,7 +1302,7 @@ def main():
         ⚠️ 本系統僅供技術分析參考，不構成投資建議。股市有風險，請嚴格執行停損。
     </div>""", unsafe_allow_html=True)
     
-    # 策略說明移至最底端
+    # 將策略說明移至最下方
     st.markdown("""<div class="strat-info">
         🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
         <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
