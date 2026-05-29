@@ -761,6 +761,8 @@ def kline(df: pd.DataFrame, sid: str,
           stop_price: float | None = None,
           target_price: float | None = None) -> go.Figure:
     df = df.copy().sort_index().tail(250)
+    df["MA5"]   = sma(df["Close"], 5)
+    df["MA10"]  = sma(df["Close"], 10)
     df["MA20"]  = sma(df["Close"], 20)
     df["MA60"]  = sma(df["Close"], 60)
     df["MA200"] = sma(df["Close"], 200)
@@ -780,9 +782,11 @@ def kline(df: pd.DataFrame, sid: str,
     ), row=1, col=1)
 
     for col_name, clr, w, dash in [
-        ("MA20", "#fb923c", 1.5, "solid"),
-        ("MA60", "#60a5fa", 1.8, "solid"),
-        ("MA200","#f43f5e", 2.0, "dot"),
+        ("MA5",  "#a78bfa", 1.2, "solid"),   # 紫
+        ("MA10", "#34d399", 1.2, "solid"),   # 綠
+        ("MA20", "#fb923c", 1.5, "solid"),   # 橘
+        ("MA60", "#60a5fa", 1.8, "solid"),   # 藍
+        ("MA200","#f43f5e", 2.0, "dot"),     # 紅虛線
     ]:
         fig.add_trace(go.Scatter(
             x=df.index, y=df[col_name],
