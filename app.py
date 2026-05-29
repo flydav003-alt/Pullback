@@ -60,29 +60,30 @@ html, body { background-color: #0a0e1a !important; }
 }
 
 /* ⚠️ 頂部 toolbar / header
-   注意：不可隱藏整個 header，否則側邊欄的展開按鈕會消失 */
+   注意：必須拉高 z-index，否則會被 main content 蓋住導致按鈕消失 */
 [data-testid="stHeader"],
 header[data-testid="stHeader"] {
     background-color: transparent !important;
     background: transparent !important;
     border-bottom: none !important;
+    z-index: 999999 !important; 
 }
 
-/* 🔒 完全隱藏右上角 Share / Deploy / ⋮ 工具列，但保留左側按鈕 */
-[data-testid="stToolbar"],
-[data-testid="stDecoration"],
-[data-testid="stStatusWidget"],
-#MainMenu { 
+/* 🔒 只隱藏右上角不需要的工具列 (Deploy, Menu)，不破壞整個 header */
+.stAppDeployButton,
+[data-testid="stToolbarActions"],
+[data-testid="stStatusWidget"] { 
     display: none !important; 
-    visibility: hidden !important; 
 }
 
-/* ★ 確保展開/摺疊側邊欄的按鈕非常明顯 ★ */
+/* ★ 確保展開/摺疊側邊欄的按鈕非常明顯且絕對可見 ★ */
 [data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
     background-color: rgba(59, 130, 246, 0.15) !important;
     border-radius: 8px !important;
     margin: 10px !important;
-    z-index: 999999 !important;
+    z-index: 9999999 !important;
 }
 [data-testid="collapsedControl"] svg {
     fill: #60a5fa !important;
@@ -91,15 +92,9 @@ header[data-testid="stHeader"] {
     background-color: rgba(59, 130, 246, 0.35) !important;
 }
 
-/* 移除 Streamlit 自動為 fixed header 預留的 top padding，並自訂合理距離避免標題被切 */
-.stApp { padding-top: 0 !important; }
-[data-testid="stAppViewBlockContainer"],
-[data-testid="stMain"] > div:first-child,
-section[data-testid="stMain"] { 
-    padding-top: 0 !important; 
-}
+/* 控制主畫面的留白，避免標題被 Header 遮擋，同時也不要蓋住 Header */
 .block-container {
-    padding-top: 3rem !important; /* 保留適當頂部空間，避免標題被上方蓋住 */
+    padding-top: 3rem !important; 
     padding-bottom: 2rem !important;
 }
 
