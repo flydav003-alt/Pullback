@@ -76,29 +76,20 @@ header[data-testid="stHeader"] {
 #MainMenu,
 header { display: none !important; visibility: hidden !important; height: 0 !important; }
 
-/* 隱藏左側 Sidebar 展開收合按鈕 */
-[data-testid="collapsedControl"] { display: none !important; }
-
 /* Header 歸零，讓主內容貼頂 */
 [data-testid="stHeader"] { height: 0 !important; min-height: 0 !important; padding: 0 !important; }
-
-/* 移除 Streamlit 自動為 fixed header 預留的 top padding，並利用 margin 大幅拉提消除白邊 */
+/* 移除 Streamlit 自動為 fixed header 預留的 top padding */
 .stApp { padding-top: 0 !important; }
 [data-testid="stAppViewBlockContainer"],
 [data-testid="stMain"] > div:first-child,
-section[data-testid="stMain"] { 
-    padding-top: 0 !important; 
-}
-.block-container {
-    padding-top: 0.5rem !important;
-    margin-top: -3.5rem !important; /* 向上拉近，消除頂部多餘空間 */
-}
+section[data-testid="stMain"] { padding-top: 0 !important; }
 
 /* main content 區塊 */
 [data-testid="stMain"],
 [data-testid="block-container"],
 .main .block-container {
     background-color: #0a0e1a !important;
+    padding-top: 0.5rem !important;
     max-width: 100% !important;
 }
 
@@ -114,11 +105,6 @@ html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4 {
     background: #0d1829 !important;
     border-right: 1px solid rgba(59,130,246,0.15) !important;
 }
-/* 讓 Sidebar 內容置頂 */
-[data-testid="stSidebarUserContent"] {
-    padding-top: 0 !important;
-}
-
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] span,
 [data-testid="stSidebar"] label,
@@ -158,7 +144,7 @@ small, .stCaption { color: #64748b !important; }
 /* ── Divider ── */
 hr { border-color: rgba(59,130,246,0.15) !important; margin: 10px 0 !important; }
 
-/* ── Metric 卡片 (原樣式備用) ── */
+/* ── Metric 卡片 ── */
 [data-testid="stMetric"] {
     background: linear-gradient(135deg, #1e2d4a 0%, #162038 100%) !important;
     border: 1px solid rgba(59,130,246,0.22) !important;
@@ -355,7 +341,6 @@ body [role="tooltip"] [data-popper-arrow]::before {
     border-radius: 8px;
     padding: 12px 18px;
     margin-top: 22px;
-    margin-bottom: 14px;
     color: #fbbf24;
     font-size: 0.8rem;
     text-align: center;
@@ -953,6 +938,17 @@ def main():
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
+    # 策略說明
+    st.markdown("""<div class="strat-info">
+        🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
+        <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
+        <strong>②動能記憶</strong>（近N日收盤曾突破前M日高，shift(1)修正）→
+        <strong>③波段拉回</strong>（Close 站在 MA20/MA60 上方 0~上限%，即均線回踩）→
+        <strong>④MA20斜率</strong>（近5日MA20變化>門檻，確保均線仍向上）→
+        <strong>⑤量縮洗盤</strong>（近3日量&lt;20日量×Y）→
+        <strong>⑥止跌轉折</strong>（今收&gt;昨高 或 站回均線）
+    </div>""", unsafe_allow_html=True)
+
     # ════════════════════════════════════════════════
     # SIDEBAR
     # ════════════════════════════════════════════════
@@ -1128,33 +1124,11 @@ def main():
 
         # ── 指標卡片 ──
         k1, k2, k3, k4 = st.columns(4)
-
-        def make_mini_card(title, val, extra=""):
-            return f"""
-            <div style="background:#0f1e33;border:1px solid rgba(59,130,246,0.2);
-                        border-radius:10px;padding:10px 10px 9px;text-align:center;
-                        min-height:82px;display:flex;flex-direction:column;
-                        justify-content:center;gap:3px;">
-                <div style="color:#64748b;font-size:0.65rem;text-transform:uppercase;
-                            letter-spacing:0.05em;line-height:1.3;">{title}</div>
-                <div style="color:#e2e8f0;font-family:'JetBrains Mono',monospace;
-                            font-size:1.05rem;font-weight:700;line-height:1.2;
-                            display:flex;justify-content:center;align-items:center;">
-                    {val} {extra}
-                </div>
-            </div>
-            """
-
-        with k1:
-            st.markdown(make_mini_card("📊 已載入", f"{ok:,} 檔"), unsafe_allow_html=True)
-        with k2:
-            st.markdown(make_mini_card("⏭️ 無資料", f"{skip:,} 檔"), unsafe_allow_html=True)
-        with k3:
-            st.markdown(make_mini_card("🔓 篩選模式", "嚴格" if strict_mode else "寬鬆"), unsafe_allow_html=True)
-        with k4:
-            delta_html = f"<span style='color:#22c55e;font-size:0.75rem;margin-left:8px;font-family:\"Noto Sans TC\",sans-serif;'>(RR≥{min_rr})</span>" if len(result_df) else ""
-            st.markdown(make_mini_card("🎯 符合條件", f"{len(result_df):,} 檔", delta_html), unsafe_allow_html=True)
-
+        with k1: st.metric("📊 已載入", f"{ok:,} 檔")
+        with k2: st.metric("⏭️ 無資料", f"{skip:,} 檔")
+        with k3: st.metric("🔓 篩選模式", "嚴格" if strict_mode else "寬鬆")
+        with k4: st.metric("🎯 符合條件", f"{len(result_df):,} 檔",
+                            delta=f"RR≥{min_rr}" if len(result_df) else None)
 
         st.divider()
 
@@ -1227,7 +1201,7 @@ def main():
                     "收盤價":        st.column_config.NumberColumn("收盤", format="%.2f"),
                     "漲跌幅(%)":     st.column_config.NumberColumn("漲跌", format="%.2f%%"),
                     "拉回深度(%)":   st.column_config.NumberColumn("拉回%", format="%.2f%%"),
-                    "量縮比":        st.column_config.NumberColumn("量縮比", format="%.2f"),
+                    "量縮比":        st.column_config.ProgressColumn("量縮比", min_value=0, max_value=1.5, format="%.2f"),
                     "今日量/均量":   st.column_config.NumberColumn("今日量/均量", format="%.2f",
                                         help="今日成交量 ÷ 20日均量；>0.8 轉折日量能回升"),
                     "MA20斜率(5日)": st.column_config.NumberColumn("MA20斜率", format="%.3f",
@@ -1316,17 +1290,6 @@ def main():
 
     st.markdown("""<div class="risk-warn">
         ⚠️ 本系統僅供技術分析參考，不構成投資建議。股市有風險，請嚴格執行停損。
-    </div>""", unsafe_allow_html=True)
-    
-    # 策略說明移至最底端
-    st.markdown("""<div class="strat-info">
-        🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
-        <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
-        <strong>②動能記憶</strong>（近N日收盤曾突破前M日高，shift(1)修正）→
-        <strong>③波段拉回</strong>（Close 站在 MA20/MA60 上方 0~上限%，即均線回踩）→
-        <strong>④MA20斜率</strong>（近5日MA20變化>門檻，確保均線仍向上）→
-        <strong>⑤量縮洗盤</strong>（近3日量&lt;20日量×Y）→
-        <strong>⑥止跌轉折</strong>（今收&gt;昨高 或 站回均線）
     </div>""", unsafe_allow_html=True)
 
 
