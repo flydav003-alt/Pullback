@@ -624,15 +624,27 @@ def run_filter(
             funnel["⑥ 止跌轉折"] += 1
 
             # 第一波拉回
-            first = True
+            # 正確邏輯：從 M 日高點之後到昨天，股價有沒有曾回到拉回區間過
+            # 若沒有 → 這是高點後第一次回落到均線附近 → ✅ 首波
+            # 若有   → 已不是首波 → —
             ma_ref_series = ma20_s if pullback_ma == 20 else ma60_s
-            for i in range(2, 12):
-                if i + 1 > len(c): break
-                ci = c.iloc[-i]; hi1 = h.iloc[-(i+1)]; m_ref_i = ma_ref_series.iloc[-i]
-                if pd.isna([ci, hi1, m_ref_i]).any(): continue
-                ref_dist = (ci - m_ref_i) / m_ref_i * 100
-                if (p["pullback_lower"] <= ref_dist <= p["pullback_upper"]) and ci > hi1:
-                    first = False; break
+            try:
+                peak_idx = h.iloc[-M:].idxmax()
+                peak_pos = df.index.get_loc(peak_idx)
+                already_pulled = False
+                # 從高點後一根掃到昨天（不含今天，避免把當前這次算進去）
+                for pos in range(peak_pos + 1, len(c) - 1):
+                    ci    = c.iloc[pos]
+                    ma_i  = ma_ref_series.iloc[pos]
+                    if pd.isna(ci) or pd.isna(ma_i) or ma_i == 0:
+                        continue
+                    d_i = (ci - ma_i) / ma_i * 100
+                    if p["pullback_lower"] <= d_i <= p["pullback_upper"]:
+                        already_pulled = True
+                        break
+                first = not already_pulled
+            except Exception:
+                first = False  # 無法判斷時保守標為非首波
 
             # ── 停損：近 10 日擺動低點下方 2%（最多允許跌 10%）──
             # 貼近實際低點，不再用 ATR 混合計算導致停損漂移
