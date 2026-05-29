@@ -783,9 +783,9 @@ def kline(df: pd.DataFrame, sid: str,
 
     for col_name, clr, w, dash in [
         ("MA5",  "#a78bfa", 1.2, "solid"),   # 紫
-        ("MA10", "#34d399", 1.2, "solid"),   # 綠
+        ("MA10", "#60a5fa", 1.5, "solid"),   # 藍（原MA60色）
         ("MA20", "#fb923c", 1.5, "solid"),   # 橘
-        ("MA60", "#60a5fa", 1.8, "solid"),   # 藍
+        ("MA60", "#34d399", 1.8, "solid"),   # 綠（原MA10色）
         ("MA200","#f43f5e", 2.0, "dot"),     # 紅虛線
     ]:
         fig.add_trace(go.Scatter(
@@ -817,18 +817,19 @@ def kline(df: pd.DataFrame, sid: str,
 
     fig.update_layout(
         height=580, paper_bgcolor="#0a0e1a", plot_bgcolor="#0a0e1a",
-        font=dict(color="#94a3b8", size=11, family="Noto Sans TC"),
+        font=dict(color="#e2e8f0", size=12, family="Noto Sans TC"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1, bgcolor="rgba(10,14,26,0.8)"),
-        xaxis_rangeslider_visible=True,
-        xaxis_rangeslider=dict(bgcolor="#0a0e1a",
-                               bordercolor="rgba(59,130,246,0.2)", thickness=0.04),
+                    xanchor="right", x=1, bgcolor="rgba(10,14,26,0.8)",
+                    font=dict(color="#e2e8f0", size=12)),
+        xaxis_rangeslider_visible=False,
         margin=dict(l=8, r=8, t=38, b=8),
     )
-    fig.update_xaxes(gridcolor="rgba(59,130,246,0.07)", linecolor="rgba(59,130,246,0.2)")
-    fig.update_yaxes(gridcolor="rgba(59,130,246,0.07)", linecolor="rgba(59,130,246,0.2)")
+    fig.update_xaxes(gridcolor="rgba(59,130,246,0.07)", linecolor="rgba(59,130,246,0.2)",
+                     tickfont=dict(color="#e2e8f0"))
+    fig.update_yaxes(gridcolor="rgba(59,130,246,0.07)", linecolor="rgba(59,130,246,0.2)",
+                     tickfont=dict(color="#e2e8f0"))
     for ann in fig.layout.annotations:
-        ann.font.update(color="#64748b", size=11)
+        ann.font.update(color="#cbd5e1", size=12)
     return fig
 
 
