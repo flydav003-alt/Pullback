@@ -711,7 +711,8 @@ def run_filter(
             stop           = max(stop, c0 * 0.90)                 # 硬上限：最多虧10%
 
             # ── 止盈：斐波那契延伸（1.272 保守 / 1.618 波段目標）──
-            swing_high = h.iloc[-M:].max()
+            # 用近20日高點作為波段高點，對應這次回踩的幅度，避免用整個大波段誇大目標
+            swing_high = h.iloc[-20:].max()
             amp        = swing_high - swing_low
             target_t1  = round(swing_high + amp * 0.272, 2)      # 1.272 延伸
             target_t2  = round(swing_high + amp * 0.618, 2)      # 1.618 延伸
