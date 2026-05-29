@@ -590,47 +590,39 @@ def run_filter(
                 continue
             funnel["② 動能記憶"] += 1
 
-            # ③ 波段拉回 — 四種買點模式
+            # ③ 波段拉回 — 基準均線 + 可選站回MA5/MA10
             pullback_mode = p.get("pullback_mode", "回踩MA20")
             pullback_ma   = p.get("pullback_ma", 20)
-            dist_ma20 = (c0 - ma20_0) / ma20_0 * 100  # 距MA20的距離（永遠計算，作為前提）
+            use_ma5       = p.get("use_ma5", False)
+            use_ma10      = p.get("use_ma10", False)
 
-            if pullback_mode == "回踩MA20":
-                # 今收在MA20上方 0 ~ upper%
-                ma_ref = ma20_0
-                dist = dist_ma20
-                if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
-                    continue
-
-            elif pullback_mode == "回踩MA60":
-                # 今收在MA60上方 0 ~ upper%
+            # 基準均線距離判斷（所有模式都要過）
+            if pullback_mode == "回踩MA60":
                 ma_ref = ma60_0
                 if pd.isna(ma_ref) or ma_ref == 0:
                     continue
                 dist = (c0 - ma_ref) / ma_ref * 100
-                if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
-                    continue
-
-            elif pullback_mode == "站回MA5":
-                # 昨收 < MA5（昨天跌破），今收 > MA5（今天站回）
-                # 同時今收距MA20 <= upper%（確保在均線附近，非亂彈）
-                ma_ref = ma20_0  # 回踩確認用MA20
-                if not (c1 < ma5_1 and c0 > ma5_0):
-                    continue
-                if not (0 <= dist_ma20 <= p["pullback_upper"]):
-                    continue
-
-            elif pullback_mode == "站回MA10":
-                # 昨收 < MA10，今收 > MA10
-                # 同時今收距MA20 <= upper%
-                ma_ref = ma20_0
-                if not (c1 < ma10_1 and c0 > ma10_0):
-                    continue
-                if not (0 <= dist_ma20 <= p["pullback_upper"]):
-                    continue
-
             else:
                 ma_ref = ma20_0
+                dist   = (c0 - ma20_0) / ma20_0 * 100
+
+            if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
+                continue
+
+            # 站回MA5（可選，AND條件）
+            if use_ma5:
+                if pd.isna(ma5_0) or pd.isna(ma5_1):
+                    continue
+                if not (c1 < ma5_1 and c0 > ma5_0):
+                    continue
+
+            # 站回MA10（可選，AND條件）
+            if use_ma10:
+                if pd.isna(ma10_0) or pd.isna(ma10_1):
+                    continue
+                if not (c1 < ma10_1 and c0 > ma10_0):
+                    continue
+
             funnel["③ 波段拉回"] += 1
 
             # ③+ 回踩確認（可選）
@@ -920,53 +912,61 @@ def main():
         st.markdown("### ⚙️ 策略參數")
 
         strict_mode = st.toggle("嚴格模式", value=True,
-            help="關閉後：量縮放寬×1.3；止跌轉折多接受『今收站回MA20』")
-        st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 多接受MA20站回 + 量縮放寬（⑤⑥）")
+            help="開啟：止跌條件 = 今收>昨高（最嚴格）。關閉：多接受『今收站回所選均線』，量縮門檻放寬×1.3")
+        st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 多接受站回所選均線（MA20/MA60依你的買點模式）+ 量縮放寬")
         st.divider()
 
         st.markdown("**① 長線多頭**")
         st.caption("MA50 > MA200 且 Close > MA200（固定）")
         st.divider()
 
-        st.markdown("**② 動能記憶**")
-        momentum_days = st.slider("回看天數 N", 5, 60, 25, 5)
-        high_window   = st.slider("新高窗口 M（天）", 20, 120, 60, 5)
+        st.markdown("**② 動能記憶**",
+            help="近N日內，收盤價是否曾突破前M日最高價。用來確認這支股票近期有過強勢動能，不是一路緩跌的弱勢股。N=回看多久、M=定義『高點』的窗口。")
+        momentum_days = st.slider("回看天數 N", 5, 60, 25, 5,
+            help="往回看幾天內有沒有出現過突破前高。25日=近一個月內曾創M日新高即符合")
+        high_window   = st.slider("新高窗口 M（天）", 20, 120, 60, 5,
+            help="『前高』的定義窗口。60日=前60日最高價。M越大代表要突破越長期的高點，條件越嚴")
         st.divider()
 
         st.markdown("**③ 波段拉回 — 買點模式**")
-        pullback_mode = st.radio(
-            "買點模式",
-            ["回踩MA20", "回踩MA60", "站回MA5", "站回MA10"],
-            index=0, horizontal=False,
-            help=(
-                "回踩MA20：今收在MA20上方0~上限%（短波段標準買點）\n"
-                "回踩MA60：今收在MA60上方0~上限%（大波段季線買點）\n"
-                "站回MA5：昨收<MA5，今收>MA5（剛站回，最甜買點）\n"
-                "站回MA10：昨收<MA10，今收>MA10（剛站回10日線）"
-            )
+
+        # MA20 / MA60 回踩：單選
+        pullback_base = st.radio(
+            "回踩基準均線",
+            ["回踩MA20", "回踩MA60"],
+            index=0, horizontal=True,
+            help="回踩MA20：短波段（今收在MA20上方0~上限%） | 回踩MA60：大波段季線（今收在MA60上方0~上限%）"
         )
 
-        # 距離上限：所有模式都用（MA5/MA10模式以MA20為前提距離門檻）
+        # MA5 / MA10 站回：獨立開關，可同時啟用
+        st.caption("站回確認（可複選）")
+        use_ma5  = st.toggle("站回MA5",  value=False,
+            help="昨收 < MA5，今收 > MA5。剛站回5日線，最甜買點。可與站回MA10同時開啟（AND條件）")
+        use_ma10 = st.toggle("站回MA10", value=False,
+            help="昨收 < MA10，今收 > MA10。剛站回10日線。可與站回MA5同時開啟（AND條件）")
+        if use_ma5 and use_ma10:
+            st.caption("📐 同時要求站回MA5 AND MA10（最嚴格，確認完整站回）")
+        elif use_ma5:
+            st.caption("📐 要求昨收<MA5，今收>MA5")
+        elif use_ma10:
+            st.caption("📐 要求昨收<MA10，今收>MA10")
+
+        # 距離上限
         pullback_upper = st.slider(
-            "距 MA20 上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
-            help=(
-                "回踩MA20/MA60：今收距所選均線不超過此值\n"
-                "站回MA5/MA10：同時要求今收距MA20不超過此值（確保還在均線附近，非亂彈）"
-            )
+            "距基準均線上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
+            help="今收距所選均線（MA20或MA60）不超過此值。站回MA5/MA10時同樣套用此前提，確保還在均線附近"
         )
 
-        # 從模式推導 pullback_ma（供後續斜率判斷用）
-        if pullback_mode == "回踩MA60":
-            pullback_ma = 60
-        else:
-            pullback_ma = 20
+        # 從設定推導內部參數
+        pullback_ma    = 60 if pullback_base == "回踩MA60" else 20
+        pullback_mode  = pullback_base  # 向後相容
         pullback_lower = 0.0
 
-        if pullback_mode in ("回踩MA20", "回踩MA60"):
-            st.caption(f"📐 今收在 {'MA20' if pullback_ma==20 else 'MA60'} 上方 0% ～ +{pullback_upper:.1f}%")
+        if pullback_base == "回踩MA20":
+            st.caption(f"📐 今收在MA20上方 0% ～ +{pullback_upper:.1f}%")
         else:
-            ma_label = "MA5" if pullback_mode == "站回MA5" else "MA10"
-            st.caption(f"📐 昨收 < {ma_label}，今收 > {ma_label}，且今收距MA20 ≤ {pullback_upper:.1f}%")
+            st.caption(f"📐 今收在MA60上方 0% ～ +{pullback_upper:.1f}%")
+
 
         st.markdown("**③+ 回踩確認**")
         touch_enabled = st.toggle("啟用回踩確認", value=True,
@@ -1050,6 +1050,7 @@ def main():
     params = dict(momentum_days=momentum_days, high_window=high_window,
                   pullback_mode=pullback_mode,
                   pullback_ma=pullback_ma, pullback_lower=pullback_lower, pullback_upper=pullback_upper,
+                  use_ma5=use_ma5, use_ma10=use_ma10,
                   vol_ratio=vol_ratio, min_rr=min_rr, ma20_slope_min=ma20_slope_min,
                   touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
 
