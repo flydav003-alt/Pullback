@@ -750,31 +750,23 @@ def kline(df: pd.DataFrame, sid: str,
             legendgroup=col_name,
         ), row=1, col=1)
 
-    # ── 布林通道（上軌 / 中軌 / 下軌，同一 legendgroup 一起切換）──
+    # ── 布林通道（只顯示上軌 + 下軌，合一 legend 項目「BB」，黃色虛線）──
     bb_clr = "#facc15"  # 黃色
-    # 上軌
+    # 上軌（showlegend=True，legend 顯示 "BB"）
     fig.add_trace(go.Scatter(
         x=df.index, y=df["BB_upper"],
-        line=dict(color=bb_clr, width=1.2, dash="dot"),
-        name="BB 上軌",
+        line=dict(color=bb_clr, width=1.2, dash="dash"),
+        name="BB",
         legendgroup="BB",
-        legendgrouptitle_text=None,
+        showlegend=True,
     ), row=1, col=1)
-    # 填色區域（上→下，透明填滿）
+    # 下軌（同 legendgroup，不重複顯示 legend 項目）
     fig.add_trace(go.Scatter(
         x=df.index, y=df["BB_lower"],
-        line=dict(color=bb_clr, width=1.2, dash="dot"),
-        fill="tonexty",
-        fillcolor="rgba(250,204,21,0.06)",
-        name="BB 下軌",
+        line=dict(color=bb_clr, width=1.2, dash="dash"),
+        name="BB",
         legendgroup="BB",
-    ), row=1, col=1)
-    # 中軌（MA20 等同，另外標示）
-    fig.add_trace(go.Scatter(
-        x=df.index, y=df["BB_mid"],
-        line=dict(color=bb_clr, width=1.0, dash="dash"),
-        name="BB 中軌",
-        legendgroup="BB",
+        showlegend=False,
     ), row=1, col=1)
 
     fig.add_trace(go.Bar(x=df.index, y=df["Volume"],
@@ -809,8 +801,9 @@ def kline(df: pd.DataFrame, sid: str,
     fig.update_layout(
         height=580, paper_bgcolor="#0a0e1a", plot_bgcolor="#0a0e1a",
         font=dict(color="#e2e8f0", size=12, family="Noto Sans TC"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1, bgcolor="rgba(10,14,26,0.8)",
+        legend=dict(orientation="h", yanchor="top", y=0.99,
+                    xanchor="left", x=0, bgcolor="rgba(10,14,26,0.75)",
+                    bordercolor="rgba(59,130,246,0.2)", borderwidth=1,
                     font=dict(color="#e2e8f0", size=12)),
         xaxis_rangeslider_visible=False,
         margin=dict(l=8, r=8, t=38, b=8),
