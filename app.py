@@ -1144,12 +1144,6 @@ def main():
                 hide_index=True,
             )
 
-            buf = io.StringIO()
-            result_df.to_csv(buf, index=False, encoding="utf-8-sig")
-            st.download_button("⬇️ 下載 CSV", buf.getvalue(),
-                               f"pullback_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                               mime="text/csv")
-
             st.divider()
 
             # ── K 線圖 ──
