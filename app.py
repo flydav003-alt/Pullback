@@ -64,141 +64,11 @@ html, body { background-color: #0a0e1a !important; }
     display: none !important; 
 }
 
-/* ── sidebar 收起時，header 左上角的展開按鈕（double_arrow_right Material Icon） ──
-   Material Icons 是字體渲染，不是 svg，必須用 font-size:0 消除，再用 ::after 補中文  */
-
-/* 把 Material Icon 字體縮成 0（消除 double_arrow_right 文字） */
-[data-testid="stSidebarOpenNavButton"] button,
-[data-testid="stSidebarOpenNavButton"] button * {
-    font-size: 0 !important;
-    color: transparent !important;
-    visibility: hidden !important;
-}
-/* 外層容器：藍色按鈕樣式 */
-[data-testid="stSidebarOpenNavButton"] {
-    background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
-    border-radius: 8px !important;
-    margin: 10px !important;
-    padding: 2px !important;
-    box-shadow: 0 4px 12px rgba(59,130,246,0.4) !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    min-width: 90px !important;
-    min-height: 36px !important;
-    position: relative !important;
-    cursor: pointer !important;
-}
-[data-testid="stSidebarOpenNavButton"]:hover {
-    background: linear-gradient(135deg, #2563eb, #60a5fa) !important;
-    box-shadow: 0 6px 16px rgba(59,130,246,0.6) !important;
-    transform: translateY(-2px) !important;
-}
-/* 中文注入在外層容器的 ::after（button 內容已清空，不怕遮擋） */
-[data-testid="stSidebarOpenNavButton"]::after {
-    content: "✨ 展開" !important;
-    color: #ffffff !important;
-    font-size: 1rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 2px !important;
-    font-family: 'Noto Sans TC', sans-serif !important;
-    visibility: visible !important;
-    position: absolute !important;
-    pointer-events: none !important;
-    display: block !important;
-}
-
-/* ==========================================================
-   ★ 側邊欄展開/摺疊按鈕全客製化 (取代原生英文與圖示) ★
-   ========================================================== */
-
-/* ── 共用：隱藏所有按鈕內的 svg / span / p ── */
-[data-testid="collapsedControl"] button svg,
-[data-testid="collapsedControl"] button span,
-[data-testid="collapsedControl"] button p,
-[data-testid="stSidebarCollapseButton"] svg,
-[data-testid="stSidebarCollapseButton"] span,
-[data-testid="stSidebarCollapseButton"] p {
-    display: none !important;
-    visibility: hidden !important;
-}
-
-/* ── 展開按鈕（側邊欄收起時）── */
-[data-testid="collapsedControl"] {
-    background: transparent !important;
-    padding: 0 !important;
-    margin: 12px !important;
-    position: relative !important;
-}
-/* 用 text-indent 把原生文字推出視窗，不影響 ::after */
-[data-testid="collapsedControl"] button {
-    background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
-    border: none !important;
-    border-radius: 8px !important;
-    padding: 8px 28px !important;
-    box-shadow: 0 4px 12px rgba(59,130,246,0.4) !important;
-    cursor: pointer !important;
-    transition: all 0.3s ease !important;
-    text-indent: -9999px !important;   /* 把原生文字推出去 */
-    overflow: hidden !important;
-    white-space: nowrap !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    min-width: 90px !important;
-    min-height: 36px !important;
-    position: relative !important;
-}
-[data-testid="collapsedControl"] button:hover {
-    background: linear-gradient(135deg, #2563eb, #60a5fa) !important;
-    transform: translateY(-2px) !important;
-    box-shadow: 0 6px 16px rgba(59,130,246,0.6) !important;
-}
-[data-testid="collapsedControl"] button::after {
-    content: "✨ 展開" !important;
-    text-indent: 0 !important;        /* 把 ::after 拉回來 */
-    color: #ffffff !important;
-    font-weight: 700 !important;
-    font-size: 1rem !important;
-    letter-spacing: 2px !important;
-    font-family: 'Noto Sans TC', sans-serif !important;
-    position: absolute !important;
-    display: block !important;
-    pointer-events: none !important;
-}
-
-/* ── 摺疊按鈕（側邊欄展開時）── */
+/* ── 完全隱藏 Streamlit 原生的所有側邊欄開關按鈕（改用自製 session_state 按鈕） ── */
+[data-testid="stSidebarOpenNavButton"],
+[data-testid="collapsedControl"],
 [data-testid="stSidebarCollapseButton"] {
-    background: rgba(239,68,68,0.15) !important;
-    border: none !important;
-    border-radius: 6px !important;
-    padding: 6px 20px !important;
-    cursor: pointer !important;
-    transition: all 0.2s !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    text-indent: -9999px !important;   /* 把原生文字推出去 */
-    overflow: hidden !important;
-    white-space: nowrap !important;
-    min-width: 80px !important;
-    min-height: 32px !important;
-    position: relative !important;
-}
-[data-testid="stSidebarCollapseButton"]:hover {
-    background: rgba(239,68,68,0.4) !important;
-}
-[data-testid="stSidebarCollapseButton"]::after {
-    content: "✖ 摺疊" !important;
-    text-indent: 0 !important;        /* 把 ::after 拉回來 */
-    color: #f87171 !important;
-    font-weight: 700 !important;
-    font-size: 0.95rem !important;
-    letter-spacing: 1px !important;
-    font-family: 'Noto Sans TC', sans-serif !important;
-    position: absolute !important;
-    display: block !important;
-    pointer-events: none !important;
+    display: none !important;
 }
 /* ========================================================== */
 
@@ -811,12 +681,49 @@ def main():
     token    = get_token()
     has_data = bool(st.session_state.get("data_dict"))
 
+    # ── 自製側邊欄開關狀態 ──
+    if "sidebar_open" not in st.session_state:
+        st.session_state["sidebar_open"] = True
+
     # ── 自動排程 ──
     if should_auto_fetch():
         with st.spinner("⏰ 18:00 自動抓取中..."):
             do_fetch(DEFAULT_STOCK_IDS, token)
         st.toast("✅ 排程自動抓取完成！", icon="🕕")
         has_data = True
+
+    # ════════════════════════════════════════════════
+    # 自製側邊欄開關按鈕（固定在頁面左上角）
+    # ════════════════════════════════════════════════
+    sidebar_open = st.session_state["sidebar_open"]
+    btn_label = "✖ 摺疊側邊欄" if sidebar_open else "✨ 展開側邊欄"
+    btn_style = (
+        "background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);"
+        if sidebar_open else
+        "background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;border:none;"
+    )
+    st.markdown(f"""
+    <style>
+    div[data-testid="stHorizontalBlock"]:first-of-type {{ margin-top: 0; }}
+    #sidebar-toggle-btn {{
+        {btn_style}
+        border-radius: 8px;
+        padding: 8px 20px;
+        font-size: 0.92rem;
+        font-weight: 700;
+        font-family: 'Noto Sans TC', sans-serif;
+        letter-spacing: 1px;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: inline-block;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+    if st.button(btn_label, key="sidebar_toggle"):
+        st.session_state["sidebar_open"] = not st.session_state["sidebar_open"]
+        st.rerun()
 
     # ════════════════════════════════════════════════
     # 標題
@@ -854,137 +761,138 @@ def main():
 
 
     # ════════════════════════════════════════════════
-    # SIDEBAR
+    # SIDEBAR（由 session_state["sidebar_open"] 控制顯示）
     # ════════════════════════════════════════════════
-    with st.sidebar:
-        st.markdown("### ⚙️ 策略參數")
+    if st.session_state["sidebar_open"]:
+        with st.sidebar:
+            st.markdown("### ⚙️ 策略參數")
 
-        strict_mode = st.toggle("嚴格模式", value=True,
-            help="開啟：止跌條件 = 今收>昨高（最嚴格）。關閉：多接受『今收站回所選均線』，量縮門檻放寬×1.3")
-        st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 多接受站回所選均線（MA20/MA60依你的買點模式）+ 量縮放寬")
-        st.divider()
+            strict_mode = st.toggle("嚴格模式", value=True,
+                help="開啟：止跌條件 = 今收>昨高（最嚴格）。關閉：多接受『今收站回所選均線』，量縮門檻放寬×1.3")
+            st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 多接受站回所選均線（MA20/MA60依你的買點模式）+ 量縮放寬")
+            st.divider()
 
-        st.markdown("**① 長線多頭**")
-        st.caption("MA50 > MA200 且 Close > MA200（固定）")
-        st.divider()
+            st.markdown("**① 長線多頭**")
+            st.caption("MA50 > MA200 且 Close > MA200（固定）")
+            st.divider()
 
-        st.markdown("**② 動能記憶**",
-            help="近N日內，收盤價是否曾突破前M日最高價。用來確認這支股票近期有過強勢動能，不是一路緩跌的弱勢股。N=回看多久、M=定義『高點』的窗口。")
-        momentum_days = st.slider("回看天數 N", 5, 60, 25, 5,
-            help="往回看幾天內有沒有出現過突破前高。25日=近一個月內曾創M日新高即符合")
-        high_window   = st.slider("新高窗口 M（天）", 20, 120, 60, 5,
-            help="『前高』的定義窗口。60日=前60日最高價。M越大代表要突破越長期的高點，條件越嚴")
-        st.divider()
+            st.markdown("**② 動能記憶**",
+                help="近N日內，收盤價是否曾突破前M日最高價。用來確認這支股票近期有過強勢動能，不是一路緩跌的弱勢股。N=回看多久、M=定義『高點』的窗口。")
+            momentum_days = st.slider("回看天數 N", 5, 60, 25, 5,
+                help="往回看幾天內有沒有出現過突破前高。25日=近一個月內曾創M日新高即符合")
+            high_window   = st.slider("新高窗口 M（天）", 20, 120, 60, 5,
+                help="『前高』的定義窗口。60日=前60日最高價。M越大代表要突破越長期的高點，條件越嚴")
+            st.divider()
 
-        st.markdown("**③ 波段拉回 — 買點模式**")
+            st.markdown("**③ 波段拉回 — 買點模式**")
 
-        # MA20 / MA60 回踩：單選
-        pullback_base = st.radio(
-            "回踩基準均線",
-            ["回踩MA20", "回踩MA60"],
-            index=0, horizontal=True,
-            help="回踩MA20：短波段（今收在MA20上方0~上限%） | 回踩MA60：大波段季線（今收在MA60上方0~上限%）"
-        )
+            # MA20 / MA60 回踩：單選
+            pullback_base = st.radio(
+                "回踩基準均線",
+                ["回踩MA20", "回踩MA60"],
+                index=0, horizontal=True,
+                help="回踩MA20：短波段（今收在MA20上方0~上限%） | 回踩MA60：大波段季線（今收在MA60上方0~上限%）"
+            )
 
-        # MA5 / MA10 站回：獨立開關，可同時啟用
-        st.caption("站回確認（可複選）")
-        use_ma5  = st.toggle("站回MA5",  value=False,
-            help="昨收 < MA5，今收 > MA5。剛站回5日線，最甜買點。可與站回MA10同時開啟（AND條件）")
-        use_ma10 = st.toggle("站回MA10", value=False,
-            help="昨收 < MA10，今收 > MA10。剛站回10日線。可與站回MA5同時開啟（AND條件）")
-        if use_ma5 and use_ma10:
-            st.caption("📐 同時要求站回MA5 AND MA10（最嚴格，確認完整站回）")
-        elif use_ma5:
-            st.caption("📐 要求昨收<MA5，今收>MA5")
-        elif use_ma10:
-            st.caption("📐 要求昨收<MA10，今收>MA10")
+            # MA5 / MA10 站回：獨立開關，可同時啟用
+            st.caption("站回確認（可複選）")
+            use_ma5  = st.toggle("站回MA5",  value=False,
+                help="昨收 < MA5，今收 > MA5。剛站回5日線，最甜買點。可與站回MA10同時開啟（AND條件）")
+            use_ma10 = st.toggle("站回MA10", value=False,
+                help="昨收 < MA10，今收 > MA10。剛站回10日線。可與站回MA5同時開啟（AND條件）")
+            if use_ma5 and use_ma10:
+                st.caption("📐 同時要求站回MA5 AND MA10（最嚴格，確認完整站回）")
+            elif use_ma5:
+                st.caption("📐 要求昨收<MA5，今收>MA5")
+            elif use_ma10:
+                st.caption("📐 要求昨收<MA10，今收>MA10")
 
-        # 距離上限
-        pullback_upper = st.slider(
-            "距基準均線上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
-            help="今收距所選均線（MA20或MA60）不超過此值。站回MA5/MA10時同樣套用此前提，確保還在均線附近"
-        )
+            # 距離上限
+            pullback_upper = st.slider(
+                "距基準均線上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
+                help="今收距所選均線（MA20或MA60）不超過此值。站回MA5/MA10時同樣套用此前提，確保還在均線附近"
+            )
 
-        # 從設定推導內部參數
-        pullback_ma    = 60 if pullback_base == "回踩MA60" else 20
-        pullback_mode  = pullback_base  # 向後相容
-        pullback_lower = 0.0
+            # 從設定推導內部參數
+            pullback_ma    = 60 if pullback_base == "回踩MA60" else 20
+            pullback_mode  = pullback_base  # 向後相容
+            pullback_lower = 0.0
 
-        if pullback_base == "回踩MA20":
-            st.caption(f"📐 今收在MA20上方 0% ～ +{pullback_upper:.1f}%")
-        else:
-            st.caption(f"📐 今收在MA60上方 0% ～ +{pullback_upper:.1f}%")
+            if pullback_base == "回踩MA20":
+                st.caption(f"📐 今收在MA20上方 0% ～ +{pullback_upper:.1f}%")
+            else:
+                st.caption(f"📐 今收在MA60上方 0% ～ +{pullback_upper:.1f}%")
 
 
-        st.markdown("**③+ 回踩確認**")
-        touch_enabled = st.toggle("啟用回踩確認", value=True,
-            help="開啟後：要求近N日內Low曾貼近均線，確保真的發生過回踩動作，而非一直飄在均線上方")
-        st.caption("🟢 開啟 = 必須有回踩動作｜⚪ 關閉 = 只看今日位置")
-        if touch_enabled:
-            touch_window = st.slider("回踩偵測窗口（日）", 3, 20, 5, 1,
-                help="往回看幾天內有沒有發生回踩。5日=近一週；10日=近兩週")
-            touch_tol = st.slider("回踩容忍度（%）", 0.0, 5.0, 3.0, 0.5,
-                help="Low 距均線多近算回踩。3%=Low曾進入均線上方3%以內（含跌破均線）即算")
-            st.caption(f"📐 近 {touch_window} 日內，Low ≤ 均線 × (1 + {touch_tol:.1f}%)")
-        else:
-            touch_window = 5
-            touch_tol    = 3.0
-        st.divider()
+            st.markdown("**③+ 回踩確認**")
+            touch_enabled = st.toggle("啟用回踩確認", value=True,
+                help="開啟後：要求近N日內Low曾貼近均線，確保真的發生過回踩動作，而非一直飄在均線上方")
+            st.caption("🟢 開啟 = 必須有回踩動作｜⚪ 關閉 = 只看今日位置")
+            if touch_enabled:
+                touch_window = st.slider("回踩偵測窗口（日）", 3, 20, 5, 1,
+                    help="往回看幾天內有沒有發生回踩。5日=近一週；10日=近兩週")
+                touch_tol = st.slider("回踩容忍度（%）", 0.0, 5.0, 3.0, 0.5,
+                    help="Low 距均線多近算回踩。3%=Low曾進入均線上方3%以內（含跌破均線）即算")
+                st.caption(f"📐 近 {touch_window} 日內，Low ≤ 均線 × (1 + {touch_tol:.1f}%)")
+            else:
+                touch_window = 5
+                touch_tol    = 3.0
+            st.divider()
 
-        st.markdown("**④ 均線斜率（均線方向）**")
-        slope_label = "MA60 近10日" if pullback_mode == "回踩MA60" else "MA20 近5日"
-        ma20_slope_min = st.slider(
-            f"{slope_label} 最小斜率", -5.0, 5.0, -0.5, 0.1,
-            help="均線變化量。正值=嚴格要求向上；-0.5=允許略微盤整；負值越大越寬鬆\n選MA60時自動改檢查MA60斜率"
-        )
-        st.caption(f"📐 {slope_label} 斜率 < 門檻則視為均線崩跌，排除")
-        st.divider()
+            st.markdown("**④ 均線斜率（均線方向）**")
+            slope_label = "MA60 近10日" if pullback_mode == "回踩MA60" else "MA20 近5日"
+            ma20_slope_min = st.slider(
+                f"{slope_label} 最小斜率", -5.0, 5.0, -0.5, 0.1,
+                help="均線變化量。正值=嚴格要求向上；-0.5=允許略微盤整；負值越大越寬鬆\n選MA60時自動改檢查MA60斜率"
+            )
+            st.caption(f"📐 {slope_label} 斜率 < 門檻則視為均線崩跌，排除")
+            st.divider()
 
-        st.markdown("**⑤ 量縮比例**")
-        vol_ratio = st.slider("近3日量 / 20日量 < Y", 0.3, 1.5, 1.0, 0.05,
-            help="預設放寬至 1.0（量不放大即可）；寬鬆模式下再×1.3")
-        st.divider()
+            st.markdown("**⑤ 量縮比例**")
+            vol_ratio = st.slider("近3日量 / 20日量 < Y", 0.3, 1.5, 1.0, 0.05,
+                help="預設放寬至 1.0（量不放大即可）；寬鬆模式下再×1.3")
+            st.divider()
 
-        st.markdown("**⑥ 損益比門檻 & 停損緩衝**")
-        min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5,
-            help="損益比低於此值的股票不顯示。RR=1.5 代表潛在獲利是潛在虧損的1.5倍")
-        atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 1.5, 0.5, 0.1,
-            help="停損線 = 前低（或均線）再往下 N 倍ATR。倍數越大停損越寬，越不容易被假跌破洗出去。預設0.5")
-        st.caption(f"📐 停損緩衝 = ATR(14) × {atr_buf}；均線與前低取較高者為停損")
-        st.divider()
+            st.markdown("**⑥ 損益比門檻 & 停損緩衝**")
+            min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5,
+                help="損益比低於此值的股票不顯示。RR=1.5 代表潛在獲利是潛在虧損的1.5倍")
+            atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 1.5, 0.5, 0.1,
+                help="停損線 = 前低（或均線）再往下 N 倍ATR。倍數越大停損越寬，越不容易被假跌破洗出去。預設0.5")
+            st.caption(f"📐 停損緩衝 = ATR(14) × {atr_buf}；均線與前低取較高者為停損")
+            st.divider()
 
-        st.markdown("### 📋 股票池")
-        user_input = st.text_area("股號（每行一個）",
-                                   value="\n".join(DEFAULT_STOCK_IDS), height=180)
-        raw_ids = re.findall(r'\b(\d{4,5})\b', user_input, re.ASCII)
-        seen_s: set[str] = set()
-        user_ids: list[str] = []
-        for x in raw_ids:
-            if x not in seen_s:
-                seen_s.add(x); user_ids.append(x)
-        st.caption(f"已設定 **{len(user_ids)}** 檔股票")
-        st.divider()
+            st.markdown("### 📋 股票池")
+            user_input = st.text_area("股號（每行一個）",
+                                       value="\n".join(DEFAULT_STOCK_IDS), height=180)
+            raw_ids = re.findall(r'\b(\d{4,5})\b', user_input, re.ASCII)
+            seen_s: set[str] = set()
+            user_ids: list[str] = []
+            for x in raw_ids:
+                if x not in seen_s:
+                    seen_s.add(x); user_ids.append(x)
+            st.caption(f"已設定 **{len(user_ids)}** 檔股票")
+            st.divider()
 
-        # ── 抓取按鈕（唯一會打 FinMind 的地方）──
-        run_btn = st.button("🚀 抓取最新資料", type="primary", use_container_width=True,
-                            help="點一次即可，資料會記憶在本頁。調整參數不需再按此按鈕。")
+            # ── 抓取按鈕（唯一會打 FinMind 的地方）──
+            run_btn = st.button("🚀 抓取最新資料", type="primary", use_container_width=True,
+                                help="點一次即可，資料會記憶在本頁。調整參數不需再按此按鈕。")
 
-        # 資料狀態顯示
-        if has_data:
-            fetch_time = st.session_state.get("last_fetch_time", "")
-            fetch_cnt  = st.session_state.get("success_cnt", 0)
-            st.success(f"✅ 資料已載入 {fetch_cnt} 檔\n{fetch_time}")
-            st.caption("⬆️ 調整上方參數即可即時重新篩選，不消耗 API")
-        else:
-            st.warning("尚無資料，請先按上方按鈕抓取")
+            # 資料狀態顯示
+            if has_data:
+                fetch_time = st.session_state.get("last_fetch_time", "")
+                fetch_cnt  = st.session_state.get("success_cnt", 0)
+                st.success(f"✅ 資料已載入 {fetch_cnt} 檔\n{fetch_time}")
+                st.caption("⬆️ 調整上方參數即可即時重新篩選，不消耗 API")
+            else:
+                st.warning("尚無資料，請先按上方按鈕抓取")
 
-        st.divider()
-        st.markdown("### ℹ️ FinMind")
-        st.caption("Token 存於 Streamlit Secrets")
-        used = len(user_ids)
-        st.progress(min(used/600, 1.0), text=f"每次抓取消耗 {used}/600 calls")
+            st.divider()
+            st.markdown("### ℹ️ FinMind")
+            st.caption("Token 存於 Streamlit Secrets")
+            used = len(user_ids)
+            st.progress(min(used/600, 1.0), text=f"每次抓取消耗 {used}/600 calls")
 
-    # ════════════════════════════════════════════════
+        # ════════════════════════════════════════════════
     # 主頁面邏輯
     # 核心架構：「抓資料」與「篩選」完全分離
     #
