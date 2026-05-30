@@ -714,6 +714,13 @@ def kline(df: pd.DataFrame, sid: str,
     df["MA60"]  = sma(df["Close"], 60)
     df["MA200"] = sma(df["Close"], 200)
 
+    # ── 布林通道（20日，2倍標準差）──
+    bb_period = 20
+    df["BB_mid"]   = df["Close"].rolling(bb_period).mean()
+    bb_std         = df["Close"].rolling(bb_period).std()
+    df["BB_upper"] = df["BB_mid"] + 2 * bb_std
+    df["BB_lower"] = df["BB_mid"] - 2 * bb_std
+
     colors = ["#ef4444" if r["Close"] >= r["Open"] else "#22c55e" for _, r in df.iterrows()]
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
@@ -728,18 +735,47 @@ def kline(df: pd.DataFrame, sid: str,
         name="K線", line=dict(width=1),
     ), row=1, col=1)
 
+    # ── 均線（點 Legend 可切換）──
     for col_name, clr, w, dash in [
-        ("MA5",  "#a78bfa", 1.2, "solid"),   # 紫
-        ("MA10", "#60a5fa", 1.5, "solid"),   # 藍（原MA60色）
-        ("MA20", "#fb923c", 1.5, "solid"),   # 橘
-        ("MA60", "#34d399", 1.8, "solid"),   # 綠（原MA10色）
-        ("MA200","#f43f5e", 2.0, "dot"),     # 紅虛線
+        ("MA5",  "#a78bfa", 1.2, "solid"),
+        ("MA10", "#60a5fa", 1.5, "solid"),
+        ("MA20", "#fb923c", 1.5, "solid"),
+        ("MA60", "#34d399", 1.8, "solid"),
+        ("MA200","#f43f5e", 2.0, "dot"),
     ]:
         fig.add_trace(go.Scatter(
             x=df.index, y=df[col_name],
             line=dict(color=clr, width=w, dash=dash),
             name=col_name,
+            legendgroup=col_name,
         ), row=1, col=1)
+
+    # ── 布林通道（上軌 / 中軌 / 下軌，同一 legendgroup 一起切換）──
+    bb_clr = "#facc15"  # 黃色
+    # 上軌
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["BB_upper"],
+        line=dict(color=bb_clr, width=1.2, dash="dot"),
+        name="BB 上軌",
+        legendgroup="BB",
+        legendgrouptitle_text=None,
+    ), row=1, col=1)
+    # 填色區域（上→下，透明填滿）
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["BB_lower"],
+        line=dict(color=bb_clr, width=1.2, dash="dot"),
+        fill="tonexty",
+        fillcolor="rgba(250,204,21,0.06)",
+        name="BB 下軌",
+        legendgroup="BB",
+    ), row=1, col=1)
+    # 中軌（MA20 等同，另外標示）
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["BB_mid"],
+        line=dict(color=bb_clr, width=1.0, dash="dash"),
+        name="BB 中軌",
+        legendgroup="BB",
+    ), row=1, col=1)
 
     fig.add_trace(go.Bar(x=df.index, y=df["Volume"],
                          marker_color=colors, name="量", opacity=0.72), row=2, col=1)
