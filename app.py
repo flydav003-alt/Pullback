@@ -613,9 +613,11 @@ def run_filter(
             funnel["⑥ 止跌轉折"] += 1
 
             # 第一波拉回
+            # MA60 大波段模式用較長窗口（120日）避免誤判首波
+            first_wave_window = 120 if pullback_mode == "回踩MA60" else M
             ma_ref_series = ma60_s if pullback_mode == "回踩MA60" else ma20_s
             try:
-                peak_idx = h.iloc[-M:].idxmax()
+                peak_idx = h.iloc[-first_wave_window:].idxmax()
                 peak_pos = df.index.get_loc(peak_idx)
                 already_pulled = False
                 # 從高點後一根掃到昨天（不含今天，避免把當前這次算進去）
@@ -636,14 +638,14 @@ def run_filter(
             atr_buf_mult = p.get("atr_buf", 0.5)
             buf          = atr_0 * atr_buf_mult
 
-            swing_low     = l.iloc[-10:].min()
+            swing_low     = l.iloc[-20:].min()                    # 與 swing_high 統一用20日
             stop_structure = swing_low - buf                      # 前低下方一個緩衝
             stop_ma        = ma_ref - buf                         # 所選均線下方一個緩衝
             stop           = max(stop_structure, stop_ma)         # 取較高（較緊）
             stop           = max(stop, c0 * 0.90)                 # 硬上限：最多虧10%
 
             # ── 止盈：斐波那契延伸（1.272 保守 / 1.618 波段目標）──
-            # 用近20日高點作為波段高點，對應這次回踩的幅度，避免用整個大波段誇大目標
+            # swing_high / swing_low 統一用近20日，振幅一致，目標價不偏移
             swing_high = h.iloc[-20:].max()
             amp        = swing_high - swing_low
             target_t1  = round(swing_high + amp * 0.272, 2)      # 1.272 延伸
@@ -677,7 +679,7 @@ def run_filter(
                 "拉回深度(%)":   round(dist, 2),
                 "量縮比":        round(vs, 2),
                 "今日量/均量":   vol_today_ratio,
-                "MA20斜率(5日)": round(slope_val, 3),
+                "均線斜率":       round(slope_val, 3),
                 "距高點天數":    days_from_high,
                 "停損價":        round(stop, 2),
                 "目標T1(1.272)": target_t1,
@@ -889,15 +891,15 @@ def main():
         # MA5 / MA10 站回：獨立開關，可同時啟用
         st.caption("站回確認（可複選）")
         use_ma5  = st.toggle("站回MA5",  value=False,
-            help="昨收 < MA5，今收 > MA5。剛站回5日線，最甜買點。可與站回MA10同時開啟（AND條件）")
+            help="今收 > MA5，確認目前站在5日線上方。可與站回MA10同時開啟（AND條件）")
         use_ma10 = st.toggle("站回MA10", value=False,
-            help="昨收 < MA10，今收 > MA10。剛站回10日線。可與站回MA5同時開啟（AND條件）")
+            help="今收 > MA10，確認目前站在10日線上方。可與站回MA5同時開啟（AND條件）")
         if use_ma5 and use_ma10:
-            st.caption("📐 同時要求站回MA5 AND MA10（最嚴格，確認完整站回）")
+            st.caption("📐 同時要求今收 > MA5 AND 今收 > MA10（最嚴格，確認完整站回）")
         elif use_ma5:
-            st.caption("📐 要求昨收<MA5，今收>MA5")
+            st.caption("📐 要求今收 > MA5")
         elif use_ma10:
-            st.caption("📐 要求昨收<MA10，今收>MA10")
+            st.caption("📐 要求今收 > MA10")
 
         # 距離上限
         pullback_upper = st.slider(
@@ -1107,9 +1109,11 @@ def main():
             )
             disp = [
                 "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
-                "量縮比","今日量/均量","MA20斜率(5日)","距高點天數",
+                "量縮比","今日量/均量","均線斜率","距高點天數",
                 "停損價","目標T1(1.272)","目標T2(1.618)","損益比(RR)","首波拉回",
             ]
+            slope_col_label = "MA60斜率(10日)" if params.get("pullback_mode") == "回踩MA60" else "MA20斜率(5日)"
+            slope_col_help  = "近10日 MA60 變化量；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 變化量；正=向上，負=下彎"
             st.dataframe(
                 result_df[disp],
                 use_container_width=True,
@@ -1129,8 +1133,8 @@ def main():
                     "量縮比":        st.column_config.NumberColumn("量縮比", format="%.2f"),
                     "今日量/均量":   st.column_config.NumberColumn("今日量/均量", format="%.2f",
                                         help="今日成交量 ÷ 20日均量；>0.8 轉折日量能回升"),
-                    "MA20斜率(5日)": st.column_config.NumberColumn("MA20斜率", format="%.3f",
-                                        help="近5日 MA20 變化量；正=向上，負=下彎"),
+                    "均線斜率":      st.column_config.NumberColumn(slope_col_label, format="%.3f",
+                                        help=slope_col_help),
                     "距高點天數":    st.column_config.NumberColumn("距高點天", format="%d天",
                                         help="距 M 日高點的天數；越小表示型態越新鮮"),
                     "停損價":        st.column_config.NumberColumn("停損", format="%.2f"),
