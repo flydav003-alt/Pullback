@@ -735,7 +735,7 @@ def kline(df: pd.DataFrame, sid: str,
         name="K線", line=dict(width=1),
     ), row=1, col=1)
 
-    # ── 均線（點 Legend 可切換）──
+    # ── 均線（點 Legend 可切換；MA5/MA10 預設隱藏）──
     for col_name, clr, w, dash in [
         ("MA5",  "#a78bfa", 1.2, "solid"),
         ("MA10", "#60a5fa", 1.5, "solid"),
@@ -748,9 +748,10 @@ def kline(df: pd.DataFrame, sid: str,
             line=dict(color=clr, width=w, dash=dash),
             name=col_name,
             legendgroup=col_name,
+            visible="legendonly" if col_name in ("MA5", "MA10") else True,
         ), row=1, col=1)
 
-    # ── 布林通道（只顯示上軌 + 下軌，合一 legend 項目「BB」，黃色虛線）──
+    # ── 布林通道（只顯示上軌 + 下軌，合一 legend 項目「BB」，黃色虛線；預設隱藏）──
     bb_clr = "#facc15"  # 黃色
     # 上軌（showlegend=True，legend 顯示 "BB"）
     fig.add_trace(go.Scatter(
@@ -759,6 +760,7 @@ def kline(df: pd.DataFrame, sid: str,
         name="BB",
         legendgroup="BB",
         showlegend=True,
+        visible="legendonly",
     ), row=1, col=1)
     # 下軌（同 legendgroup，不重複顯示 legend 項目）
     fig.add_trace(go.Scatter(
@@ -767,6 +769,7 @@ def kline(df: pd.DataFrame, sid: str,
         name="BB",
         legendgroup="BB",
         showlegend=False,
+        visible="legendonly",
     ), row=1, col=1)
 
     fig.add_trace(go.Bar(x=df.index, y=df["Volume"],
