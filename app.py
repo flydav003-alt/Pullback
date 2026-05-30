@@ -68,9 +68,7 @@ html, body { background-color: #0a0e1a !important; }
    ★ 側邊欄展開/摺疊按鈕全客製化 (取代原生英文與圖示) ★
    ========================================================== */
 
-/* 1. 隱藏所有原生 svg / span / 文字（含 collapsedControl 內的子按鈕） */
-[data-testid="collapsedControl"] svg,
-[data-testid="collapsedControl"] span,
+/* ── 共用：隱藏所有按鈕內的 svg / span ── */
 [data-testid="collapsedControl"] button svg,
 [data-testid="collapsedControl"] button span,
 [data-testid="stSidebarCollapseButton"] svg,
@@ -78,70 +76,68 @@ html, body { background-color: #0a0e1a !important; }
     display: none !important;
 }
 
-/* 讓所有原生文字透明，防止英文殘留 */
-[data-testid="collapsedControl"],
-[data-testid="collapsedControl"] button,
-[data-testid="stSidebarCollapseButton"] {
-    color: transparent !important;
-    font-size: 0 !important;
-}
-
-/* 2. 左上角「展開」按鈕 — 套在外層容器 collapsedControl 上 */
+/* ── 展開按鈕（側邊欄收起時，左上角） ──
+   Streamlit DOM: <div data-testid="collapsedControl"><button>…</button></div>
+   真正可點擊的是 <button>，所以樣式和 ::after 都打在 button 上              */
 [data-testid="collapsedControl"] {
-    display: flex !important;
-    visibility: visible !important;
+    /* 外層容器不設背景，讓 button 全權負責 */
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 12px !important;
+}
+[data-testid="collapsedControl"] button {
     background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
+    border: none !important;
     border-radius: 8px !important;
-    margin: 15px !important;
-    padding: 8px 24px !important;
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
-    z-index: 9999999 !important;
+    padding: 8px 28px !important;
+    box-shadow: 0 4px 12px rgba(59,130,246,0.4) !important;
+    cursor: pointer !important;
     transition: all 0.3s ease !important;
+    color: transparent !important;   /* 隱藏原生文字 */
+    font-size: 0 !important;
+    display: flex !important;
     align-items: center !important;
     justify-content: center !important;
     width: auto !important;
+    min-width: 90px !important;
 }
-[data-testid="collapsedControl"]:hover {
+[data-testid="collapsedControl"] button:hover {
     background: linear-gradient(135deg, #2563eb, #60a5fa) !important;
     transform: translateY(-2px) !important;
-    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.6) !important;
+    box-shadow: 0 6px 16px rgba(59,130,246,0.6) !important;
 }
-/* 注入中文「展開」— 只用 ::after，不碰子按鈕 */
-[data-testid="collapsedControl"]::after {
+/* 中文注入在 button::after，跟點擊區完全重合 */
+[data-testid="collapsedControl"] button::after {
     content: "✨ 展開" !important;
     color: #ffffff !important;
     font-weight: 700 !important;
-    font-size: 1.05rem !important;
+    font-size: 1rem !important;
     letter-spacing: 2px !important;
     font-family: 'Noto Sans TC', sans-serif !important;
-    visibility: visible !important;
     display: block !important;
     pointer-events: none !important;
 }
-/* 把子 button 縮到 0，讓外層容器負責視覺 */
-[data-testid="collapsedControl"] button {
-    position: absolute !important;
-    width: 100% !important;
-    height: 100% !important;
-    opacity: 0 !important;
-    cursor: pointer !important;
-}
 
-/* 3. 側邊欄內「摺疊」按鈕 — 只用 stSidebarCollapseButton，移除 stSidebarHeader button */
+/* ── 摺疊按鈕（側邊欄展開時）──
+   Streamlit DOM: <button data-testid="stSidebarCollapseButton">…</button>
+   本身就是 button，直接套                                                   */
 [data-testid="stSidebarCollapseButton"] {
-    background: rgba(239, 68, 68, 0.15) !important;
+    background: rgba(239,68,68,0.15) !important;
+    border: none !important;
     border-radius: 6px !important;
-    padding: 6px 16px !important;
-    width: auto !important;
+    padding: 6px 20px !important;
+    cursor: pointer !important;
     transition: all 0.2s !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
+    color: transparent !important;   /* 隱藏原生文字 */
+    font-size: 0 !important;
+    min-width: 80px !important;
 }
 [data-testid="stSidebarCollapseButton"]:hover {
-    background: rgba(239, 68, 68, 0.4) !important;
+    background: rgba(239,68,68,0.4) !important;
 }
-/* 注入紅色中文「摺疊」— 只用單一 selector，避免重複 */
 [data-testid="stSidebarCollapseButton"]::after {
     content: "✖ 摺疊" !important;
     color: #f87171 !important;
@@ -149,7 +145,6 @@ html, body { background-color: #0a0e1a !important; }
     font-size: 0.95rem !important;
     letter-spacing: 1px !important;
     font-family: 'Noto Sans TC', sans-serif !important;
-    visibility: visible !important;
     display: block !important;
     pointer-events: none !important;
 }
