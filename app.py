@@ -541,18 +541,18 @@ def run_filter(
             if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
                 continue
 
-            # 站回MA5（可選，AND條件）
+            # 站回MA5（可選，AND條件）— 今收在 MA5 上方即可
             if use_ma5:
-                if pd.isna(ma5_0) or pd.isna(ma5_1):
+                if pd.isna(ma5_0):
                     continue
-                if not (c1 < ma5_1 and c0 > ma5_0):
+                if not (c0 > ma5_0):
                     continue
 
-            # 站回MA10（可選，AND條件）
+            # 站回MA10（可選，AND條件）— 今收在 MA10 上方即可
             if use_ma10:
-                if pd.isna(ma10_0) or pd.isna(ma10_1):
+                if pd.isna(ma10_0):
                     continue
-                if not (c1 < ma10_1 and c0 > ma10_0):
+                if not (c0 > ma10_0):
                     continue
 
             funnel["③ 波段拉回"] += 1
