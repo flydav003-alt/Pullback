@@ -681,7 +681,7 @@ def run_filter(
             stop           = max(stop_structure, stop_ma)         # 取較高（較緊）
             stop           = max(stop, c0 * (1 - p.get("max_stop_pct", 0.10)))
 
-            # ── 止盈：斐波那契延伸（1.272 保守 / 1.618 波段目標）──
+            # ── 止盈：斐波那契延伸（比例由側欄參數決定）──
             # swing_high / swing_low 統一用波段窗口，振幅一致，目標價不偏移
             swing_high = h.iloc[-swing_window:].max()
             amp        = swing_high - swing_low
@@ -717,8 +717,8 @@ def run_filter(
                 "轉折確認":      "✅" if passed_reversal and volume_rebound else "觀察",
                 "距高點天數":    days_from_high,
                 "停損價":        round(stop, 2),
-                "目標T1(1.272)": target_t1,
-                "目標T2(1.618)": target_t2,
+                "目標T1":        target_t1,
+                "目標T2":        target_t2,
                 "空間%":         round((target_t1 - c0) / c0 * 100, 1) if c0 > 0 else 0,
                 "損益比(RR)":    rr,
                 "首波拉回":      "✅" if first else "—",
@@ -824,7 +824,7 @@ def kline(df: pd.DataFrame, sid: str,
         fig.add_hline(
             y=target_t1, row=1, col=1,
             line=dict(color="#22c55e", width=1.5, dash="dot"),
-            annotation_text=f"🎯 T1(1.272) {target_t1:.2f}",
+            annotation_text=f"🎯 T1 {target_t1:.2f}",
             annotation_position="top right",
             annotation_font=dict(color="#22c55e", size=10),
         )
@@ -832,7 +832,7 @@ def kline(df: pd.DataFrame, sid: str,
         fig.add_hline(
             y=target_t2, row=1, col=1,
             line=dict(color="#a78bfa", width=1.5, dash="dash"),
-            annotation_text=f"🚀 T2(1.618) {target_t2:.2f}",
+            annotation_text=f"🚀 T2 {target_t2:.2f}",
             annotation_position="top right",
             annotation_font=dict(color="#a78bfa", size=10),
         )
