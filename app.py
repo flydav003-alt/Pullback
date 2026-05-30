@@ -64,6 +64,54 @@ html, body { background-color: #0a0e1a !important; }
     display: none !important; 
 }
 
+/* ── sidebar 收起時，header 左上角的展開按鈕（double_arrow_right） ── */
+/* 隱藏原生 svg icon 和文字 */
+[data-testid="stSidebarOpenNavButton"] svg,
+[data-testid="stSidebarOpenNavButton"] span {
+    display: none !important;
+}
+/* 整個容器：藍色按鈕樣式，跟摺疊按鈕對稱 */
+[data-testid="stSidebarOpenNavButton"] {
+    background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
+    border-radius: 8px !important;
+    margin: 10px !important;
+    padding: 0 !important;
+    box-shadow: 0 4px 12px rgba(59,130,246,0.4) !important;
+    overflow: visible !important;
+}
+[data-testid="stSidebarOpenNavButton"]:hover {
+    background: linear-gradient(135deg, #2563eb, #60a5fa) !important;
+    box-shadow: 0 6px 16px rgba(59,130,246,0.6) !important;
+}
+/* 子 button：text-indent 推走英文，::after 注入中文 */
+[data-testid="stSidebarOpenNavButton"] button {
+    background: transparent !important;
+    border: none !important;
+    padding: 8px 24px !important;
+    cursor: pointer !important;
+    text-indent: -9999px !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    min-width: 90px !important;
+    min-height: 36px !important;
+    position: relative !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+[data-testid="stSidebarOpenNavButton"] button::after {
+    content: "✨ 展開" !important;
+    text-indent: 0 !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    font-size: 1rem !important;
+    letter-spacing: 2px !important;
+    font-family: 'Noto Sans TC', sans-serif !important;
+    position: absolute !important;
+    display: block !important;
+    pointer-events: none !important;
+}
+
 /* ==========================================================
    ★ 側邊欄展開/摺疊按鈕全客製化 (取代原生英文與圖示) ★
    ========================================================== */
