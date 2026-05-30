@@ -450,8 +450,8 @@ def atr(df: pd.DataFrame, w: int = 14) -> pd.Series:
 # ==============================================================================
 # ── 6. 篩選策略（含條件漏斗統計）
 #
-#  條件 ①~⑥（v3.2 新增 ④ MA20斜率）：
-#    ④ MA20 斜率：近5日 MA20 變化 >= ma20_slope_min
+#  條件 ①~⑥：
+#    ④ 均線斜率%：MA20看近5日百分比變化；MA60看近10日百分比變化
 #  「寬鬆模式」（strict=False）：
 #    ⑤ 量縮：放寬為 < vol_ratio * 1.3
 #    ⑥ 止跌轉折：今收 > 昨高  OR  今收站回 MA20（MA20 站回也算）
@@ -462,6 +462,7 @@ def run_filter(
     data: dict[str, pd.DataFrame],
     p: dict,
     strict: bool = True,
+    stage: str = "entry",
 ) -> tuple[pd.DataFrame, dict]:
     """
     回傳 (result_df, funnel_counts)
@@ -472,8 +473,9 @@ def run_filter(
         "② 動能記憶": 0,
         "③ 波段拉回": 0,
         "③+ 回踩確認": 0,
-        "④ MA20斜率": 0,
+        "④ 均線斜率%": 0,
         "⑤ 量縮洗盤": 0,
+        "⑤+ 轉強量能": 0,
         "⑥ 止跌轉折": 0,
     }
     results = []
@@ -531,15 +533,26 @@ def run_filter(
             # 基準均線距離判斷（所有模式都要過）
             if pullback_mode == "回踩MA60":
                 ma_ref = ma60_0
+                ma_ref_1 = ma60_s.iloc[-2] if len(ma60_s) >= 2 else np.nan
+                ma_ref_series = ma60_s
                 if pd.isna(ma_ref) or ma_ref == 0:
                     continue
-                dist = (c0 - ma_ref) / ma_ref * 100
             else:
                 ma_ref = ma20_0
-                dist   = (c0 - ma20_0) / ma20_0 * 100
+                ma_ref_1 = ma20_1
+                ma_ref_series = ma20_s
 
-            if not (p["pullback_lower"] <= dist <= p["pullback_upper"]):
+            close_dist = (c0 - ma_ref) / ma_ref * 100
+            pb_window = max(1, p.get("touch_window", 5))
+            low_dist_series = (l.iloc[-pb_window:] - ma_ref_series.iloc[-pb_window:]) / ma_ref_series.iloc[-pb_window:] * 100
+            pullback_low_dist = low_dist_series.min()
+
+            # 收盤要站回基準均線；近期低點允許小幅跌破均線，避免錯過假跌破後收回的波段買點。
+            if not (c0 >= ma_ref and close_dist <= p["pullback_upper"]):
                 continue
+            if pd.isna(pullback_low_dist) or pullback_low_dist < p["pullback_lower"]:
+                continue
+            dist = pullback_low_dist
 
             # 站回MA5（可選，AND條件）— 今收在 MA5 上方即可
             if use_ma5:
@@ -575,14 +588,16 @@ def run_filter(
                     continue
             funnel["③+ 回踩確認"] += 1
 
-            # ④ 均線斜率（MA60模式看MA60斜率，其餘看MA20斜率）
+            # ④ 均線斜率（正規化百分比；MA60模式看10日，其餘看MA20近5日）
             if pullback_mode == "回踩MA60":
-                slope_val = (ma60_s.iloc[-1] - ma60_s.iloc[-11]) if len(ma60_s) >= 11 else 0.0
+                slope_base = ma60_s.iloc[-11] if len(ma60_s) >= 11 else np.nan
+                slope_val = (ma60_0 / slope_base - 1) * 100 if slope_base and not pd.isna(slope_base) else 0.0
             else:
-                slope_val = (ma20_s.iloc[-1] - ma20_s.iloc[-6]) if len(ma20_s) >= 6 else 0.0
-            if slope_val < p.get("ma20_slope_min", -0.5):
+                slope_base = ma20_s.iloc[-6] if len(ma20_s) >= 6 else np.nan
+                slope_val = (ma20_0 / slope_base - 1) * 100 if slope_base and not pd.isna(slope_base) else 0.0
+            if slope_val < p.get("ma_slope_pct_min", 0.0):
                 continue
-            funnel["④ MA20斜率"] += 1
+            funnel["④ 均線斜率%"] += 1
 
             # ⑤ 量縮洗盤
             v3  = v.iloc[-4:-1].mean()
@@ -594,11 +609,19 @@ def run_filter(
                 continue
             funnel["⑤ 量縮洗盤"] += 1
 
+            # ⑤+ 今日轉強量能：拉回時量縮，但觸發日不能完全沒量，也避免爆量追高。
+            v0_val = v.iloc[-1]
+            vol_today_ratio = v0_val / v20 if v20 > 0 else 0.0
+            volume_rebound = p.get("today_vol_min", 0.6) <= vol_today_ratio < p.get("today_vol_max", 2.0)
+            if stage == "entry" and not volume_rebound:
+                continue
+            if volume_rebound:
+                funnel["⑤+ 轉強量能"] += 1
+
             # ⑥ 止跌轉折
             # 嚴格：今收 > 昨高
             # 寬鬆：今收 > 昨高  OR  今收站回所選均線（今收 > ma_ref 且昨收 < 昨日ma_ref）
             if pullback_mode == "回踩MA60":
-                ma_ref_1 = ma60_s.iloc[-2] if len(ma60_s) >= 2 else np.nan
                 reversal_loose = (c0 > h1) or (
                     not pd.isna(ma_ref_1) and c0 > ma60_0 and c1 < ma_ref_1
                 )
@@ -608,13 +631,13 @@ def run_filter(
                 )
             reversal_strict = (c0 > h1)
             passed_reversal = reversal_strict if strict else reversal_loose
-            if not passed_reversal:
+            if stage == "entry" and not passed_reversal:
                 continue
-            funnel["⑥ 止跌轉折"] += 1
+            if passed_reversal:
+                funnel["⑥ 止跌轉折"] += 1
 
             # 第一波拉回判斷（優化版）
             # 計算從高點後的拉回次數，只有一次（或仍在首次拉回附近）才標為首波
-            ma_ref_series = ma60_s if pullback_mode == "回踩MA60" else ma20_s
             first = False
             try:
                 peak_idx    = h.iloc[-M:].idxmax()
@@ -651,18 +674,21 @@ def run_filter(
             atr_buf_mult = p.get("atr_buf", 0.5)
             buf          = atr_0 * atr_buf_mult
 
-            swing_low     = l.iloc[-20:].min()                    # 與 swing_high 統一用20日
+            swing_window  = p.get("swing_window", 20)
+            swing_low     = l.iloc[-swing_window:].min()
             stop_structure = swing_low - buf                      # 前低下方一個緩衝
             stop_ma        = ma_ref - buf                         # 所選均線下方一個緩衝
             stop           = max(stop_structure, stop_ma)         # 取較高（較緊）
-            stop           = max(stop, c0 * 0.90)                 # 硬上限：最多虧10%
+            stop           = max(stop, c0 * (1 - p.get("max_stop_pct", 0.10)))
 
             # ── 止盈：斐波那契延伸（1.272 保守 / 1.618 波段目標）──
-            # swing_high / swing_low 統一用近20日，振幅一致，目標價不偏移
-            swing_high = h.iloc[-20:].max()
+            # swing_high / swing_low 統一用波段窗口，振幅一致，目標價不偏移
+            swing_high = h.iloc[-swing_window:].max()
             amp        = swing_high - swing_low
-            target_t1  = round(swing_high + amp * 0.272, 2)      # 1.272 延伸
-            target_t2  = round(swing_high + amp * 0.618, 2)      # 1.618 延伸
+            fib_t1     = p.get("fib_t1", 0.272)
+            fib_t2     = p.get("fib_t2", 0.618)
+            target_t1  = round(swing_high + amp * fib_t1, 2)
+            target_t2  = round(swing_high + amp * fib_t2, 2)
 
             # RR 用保守目標 T1 計算，不高估
             risk   = c0 - stop
@@ -679,11 +705,6 @@ def run_filter(
             except Exception:
                 days_from_high = 0
 
-            # 今日量 / 20日均量：轉折日量能是否回升
-            v0_val          = v.iloc[-1]
-            v20_mean        = v.iloc[-21:-1].mean()
-            vol_today_ratio = round(v0_val / v20_mean, 2) if v20_mean > 0 else 0.0
-
             results.append({
                 "代號":          sid,
                 "名稱":          STOCK_NAME_MAP.get(sid, ""),
@@ -691,8 +712,9 @@ def run_filter(
                 "漲跌幅(%)":     round((c0 - c1) / c1 * 100, 2) if c1 else 0,
                 "拉回深度(%)":   round(dist, 2),
                 "量縮比":        round(vs, 2),
-                "今日量/均量":   vol_today_ratio,
-                "均線斜率":       round(slope_val, 3),
+                "今日量/均量":   round(vol_today_ratio, 2),
+                "均線斜率%":      round(slope_val, 2),
+                "轉折確認":      "✅" if passed_reversal and volume_rebound else "觀察",
                 "距高點天數":    days_from_high,
                 "停損價":        round(stop, 2),
                 "目標T1(1.272)": target_t1,
@@ -948,20 +970,23 @@ def main():
             st.caption("📐 要求今收 > MA10")
 
         # 距離上限
+        pullback_lower = st.slider(
+            "回踩低點允許跌破均線 %", -5.0, 1.0, -2.0, 0.5,
+            help="看近期低點是否小破均線。-2%=允許 Low 跌到均線下方2%以內，但今日收盤仍必須站回基準均線"
+        )
         pullback_upper = st.slider(
             "距基準均線上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
-            help="今收距所選均線（MA20或MA60）不超過此值。站回MA5/MA10時同樣套用此前提，確保還在均線附近"
+            help="今日收盤距所選均線（MA20或MA60）不超過此值。站回MA5/MA10時同樣套用此前提，確保還在均線附近"
         )
 
         # 從設定推導內部參數
         pullback_ma    = 60 if pullback_base == "回踩MA60" else 20
         pullback_mode  = pullback_base  # 向後相容
-        pullback_lower = 0.0
 
         if pullback_base == "回踩MA20":
-            st.caption(f"📐 今收在MA20上方 0% ～ +{pullback_upper:.1f}%")
+            st.caption(f"📐 近期低點可到 MA20 {pullback_lower:.1f}%；今收需站回 MA20 且不高於 +{pullback_upper:.1f}%")
         else:
-            st.caption(f"📐 今收在MA60上方 0% ～ +{pullback_upper:.1f}%")
+            st.caption(f"📐 近期低點可到 MA60 {pullback_lower:.1f}%；今收需站回 MA60 且不高於 +{pullback_upper:.1f}%")
 
 
         st.markdown("**③+ 回踩確認**")
@@ -981,24 +1006,37 @@ def main():
 
         st.markdown("**④ 均線斜率（均線方向）**")
         slope_label = "MA60 近10日" if pullback_mode == "回踩MA60" else "MA20 近5日"
-        ma20_slope_min = st.slider(
-            f"{slope_label} 最小斜率", -5.0, 5.0, -0.5, 0.1,
-            help="均線變化量。正值=嚴格要求向上；-0.5=允許略微盤整；負值越大越寬鬆\n選MA60時自動改檢查MA60斜率"
+        ma_slope_pct_min = st.slider(
+            f"{slope_label} 最小斜率 %", -5.0, 5.0, 0.0, 0.1,
+            help="正規化百分比斜率。MA20=(今日MA20/5日前MA20-1)*100；MA60=(今日MA60/10日前MA60-1)*100"
         )
-        st.caption(f"📐 {slope_label} 斜率 < 門檻則視為均線崩跌，排除")
+        st.caption(f"📐 {slope_label} 斜率% < {ma_slope_pct_min:.1f}% 則排除")
         st.divider()
 
         st.markdown("**⑤ 量縮比例**")
         vol_ratio = st.slider("近3日量 / 20日量 < Y", 0.3, 1.5, 1.0, 0.05,
             help="預設放寬至 1.0（量不放大即可）；寬鬆模式下再×1.3")
+        st.markdown("**⑤+ 今日轉強量能**")
+        today_vol_min = st.slider("今日量 / 20日量 下限", 0.0, 2.0, 0.6, 0.1,
+            help="避免轉折日完全沒量。0.6=今日量至少達20日均量的60%")
+        today_vol_max = st.slider("今日量 / 20日量 上限", 0.8, 5.0, 2.0, 0.1,
+            help="避免爆大量追高。2.0=今日量低於20日均量2倍")
         st.divider()
 
-        st.markdown("**⑥ 損益比門檻 & 停損緩衝**")
+        st.markdown("**⑥ 損益比門檻 & 停損/目標**")
         min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5,
             help="損益比低於此值的股票不顯示。RR=1.5 代表潛在獲利是潛在虧損的1.5倍")
         atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 1.5, 0.5, 0.1,
             help="停損線 = 前低（或均線）再往下 N 倍ATR。倍數越大停損越寬，越不容易被假跌破洗出去。預設0.5")
-        st.caption(f"📐 停損緩衝 = ATR(14) × {atr_buf}；均線與前低取較高者為停損")
+        max_stop_pct = st.slider("最大停損幅度 %", 5.0, 20.0, 10.0, 0.5,
+            help="停損硬上限。10%=不允許停損距離超過買價10%")
+        swing_window = st.slider("波段計算窗口（日）", 10, 60, 20, 5,
+            help="用來計算前高、前低與目標價。大波段可拉到30~40")
+        fib_t1 = st.slider("T1延伸比例", 0.1, 0.8, 0.272, 0.01,
+            help="T1=前高+振幅×比例。0.272約等於1.272延伸")
+        fib_t2 = st.slider("T2延伸比例", 0.3, 1.2, 0.618, 0.01,
+            help="T2=前高+振幅×比例。0.618約等於1.618延伸")
+        st.caption(f"📐 停損緩衝 = ATR(14) × {atr_buf}；最大停損 {max_stop_pct:.1f}%；窗口 {swing_window} 日")
         st.divider()
 
         st.markdown("### 📋 股票池")
@@ -1052,7 +1090,10 @@ def main():
                   pullback_ma=pullback_ma, pullback_lower=pullback_lower, pullback_upper=pullback_upper,
                   use_ma5=use_ma5, use_ma10=use_ma10,
                   vol_ratio=vol_ratio, min_rr=min_rr, atr_buf=atr_buf,
-                  ma20_slope_min=ma20_slope_min,
+                  ma_slope_pct_min=ma_slope_pct_min,
+                  today_vol_min=today_vol_min, today_vol_max=today_vol_max,
+                  max_stop_pct=max_stop_pct / 100, swing_window=swing_window,
+                  fib_t1=fib_t1, fib_t2=fib_t2,
                   touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
 
     # Step A：有按「抓取」按鈕 → 打 FinMind，存入 session_state
@@ -1072,10 +1113,22 @@ def main():
         skip = st.session_state["skip_cnt"]
 
         # 篩選（純本地運算，每次 rerun 都跑，< 1 秒，不打 API）
-        result_df, funnel = run_filter(data, params, strict=strict_mode)
+        entry_df, entry_funnel = run_filter(data, params, strict=strict_mode, stage="entry")
+        watch_df, watch_funnel = run_filter(data, params, strict=strict_mode, stage="watch")
+
+        stage_view = st.radio(
+            "策略階段",
+            ["進場觸發", "觀察名單"],
+            horizontal=True,
+            help="觀察名單=結構已符合，等待轉強量能與止跌轉折；進場觸發=今日已出現可執行買點"
+        )
+        if stage_view == "進場觸發":
+            result_df, funnel = entry_df, entry_funnel
+        else:
+            result_df, funnel = watch_df, watch_funnel
 
         # ── 指標卡片 ──
-        k1, k2, k3, k4 = st.columns(4)
+        k1, k2, k3, k4, k5 = st.columns(5)
         
         def make_mini_card(title, val, extra=""):
             return f"""
@@ -1100,8 +1153,10 @@ def main():
         with k3:
             st.markdown(make_mini_card("🔓 篩選模式", "嚴格" if strict_mode else "寬鬆"), unsafe_allow_html=True)
         with k4:
+            st.markdown(make_mini_card("👀 觀察名單", f"{len(watch_df):,} 檔"), unsafe_allow_html=True)
+        with k5:
             delta_html = f"<span style='color:#22c55e;font-size:0.75rem;margin-left:8px;font-family:\"Noto Sans TC\",sans-serif;'>(RR≥{min_rr})</span>" if len(result_df) else ""
-            st.markdown(make_mini_card("🎯 符合條件", f"{len(result_df):,} 檔", delta_html), unsafe_allow_html=True)
+            st.markdown(make_mini_card("🎯 進場觸發", f"{len(entry_df):,} 檔", delta_html), unsafe_allow_html=True)
 
         st.divider()
 
@@ -1147,7 +1202,7 @@ def main():
         if result_df.empty:
             st.warning("⚠️ 無符合個股。請看上方漏斗找瓶頸，或切換寬鬆模式。")
         else:
-            st.markdown(f"### 📋 篩選結果 — {len(result_df)} 檔（依 RR 降序）")
+            st.markdown(f"### 📋 {stage_view} — {len(result_df)} 檔（依 RR 降序）")
             # 加入 K 線連結欄位
             result_df = result_df.copy()
             result_df["K線分析"] = result_df["代號"].apply(
@@ -1155,11 +1210,10 @@ def main():
             )
             disp = [
                 "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
-                "量縮比","今日量/均量","均線斜率","距高點天數",
+                "量縮比","今日量/均量","均線斜率%","轉折確認","距高點天數",
                 "空間%","損益比(RR)","首波拉回","停損價","目標T1(1.272)","目標T2(1.618)",
             ]
-            slope_col_label = "MA60斜率(10日)" if params.get("pullback_mode") == "回踩MA60" else "MA20斜率(5日)"
-            slope_col_help  = "近10日 MA60 變化量；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 變化量；正=向上，負=下彎"
+            slope_col_help  = "近10日 MA60 百分比變化；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 百分比變化；正=向上，負=下彎"
             st.dataframe(
                 result_df[disp],
                 use_container_width=True,
@@ -1178,9 +1232,11 @@ def main():
                     "拉回深度(%)":   st.column_config.NumberColumn("拉回%", format="%.1f%%", width=60),
                     "量縮比":        st.column_config.NumberColumn("量縮",  format="%.2f"),
                     "今日量/均量":   st.column_config.NumberColumn("均量",  format="%.2f",
-                                        help="今日成交量 ÷ 20日均量；>0.8 轉折日量能回升"),
-                    "均線斜率":      st.column_config.NumberColumn("斜率",  format="%.1f",
+                                        help="今日成交量 ÷ 20日均量；進場觸發需落在設定區間"),
+                    "均線斜率%":     st.column_config.NumberColumn("斜率%",  format="%.2f%%",
                                         help=slope_col_help),
+                    "轉折確認":      st.column_config.TextColumn("轉折", width=65,
+                                        help="觀察=結構符合但尚未同時通過今日量能與止跌轉折；✅=已觸發"),
                     "距高點天數":    st.column_config.NumberColumn("高點",  format="%d天",
                                         help="距 M 日高點的天數；越小表示型態越新鮮"),
                     "停損價":        st.column_config.NumberColumn("停損",  format="%.1f"),
@@ -1254,7 +1310,8 @@ def main():
                         f"| 拉回基準 | **{'MA20' if pullback_ma==20 else 'MA60'}** |")
         with c2:
             st.markdown(f"| 參數 | 值 |\n|---|---|\n"
-                        f"| 拉回範圍 | **0% ～ +{pullback_upper:.1f}%** |\n"
+                        f"| 回踩低點 | **{pullback_lower:.1f}% 以內** |\n"
+                        f"| 今收距均線 | **0% ～ +{pullback_upper:.1f}%** |\n"
                         f"| 量縮比 Y | **{vol_ratio}** |\n"
                         f"| 最低 RR | **{min_rr}x** |\n"
                         f"| 股票池 | **{len(user_ids)}** 檔 |")
@@ -1268,10 +1325,11 @@ def main():
         🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
         <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
         <strong>②動能記憶</strong>（近N日收盤曾突破前M日高，shift(1)修正）→
-        <strong>③波段拉回</strong>（Close 站在 MA20/MA60 上方 0~上限%，即均線回踩）→
-        <strong>④MA20斜率</strong>（近5日MA20變化>門檻，確保均線仍向上）→
+        <strong>③波段拉回</strong>（近期低點允許小破均線，今收需站回 MA20/MA60 且不過度乖離）→
+        <strong>④均線斜率%</strong>（MA20/MA60 正規化百分比斜率>門檻）→
         <strong>⑤量縮洗盤</strong>（近3日量&lt;20日量×Y）→
-        <strong>⑥止跌轉折</strong>（今收&gt;昨高 或 站回均線）
+        <strong>⑤+今日轉強量能</strong>（今日量落在設定區間）→
+        <strong>⑥止跌轉折</strong>（今收&gt;昨高 或 站回均線）。觀察名單先看①~⑤，進場觸發再要求⑤+與⑥。
     </div>""", unsafe_allow_html=True)
 
 
