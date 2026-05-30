@@ -853,178 +853,7 @@ def do_fetch(ids: list[str], token: str):
 
 
 # ==============================================================================
-# ── 9. 回測引擎
-# ==============================================================================
-def run_backtest(
-    data: dict[str, pd.DataFrame],
-    params: dict,
-    max_hold: int = 30,
-    target_mode: str = "T1",
-    strict: bool = True,
-) -> pd.DataFrame:
-    """
-    對每支股票的每個歷史交易日跑一次篩選條件；
-    符合條件 → 隔日開盤進場 → 追蹤至停損 / 達標 / 到期出場。
-    回傳逐筆交易 DataFrame。
-    """
-    trades = []
-
-    for sid, df_raw in data.items():
-        if len(df_raw) < 250:
-            continue
-        df = df_raw.copy().sort_index()
-        c, h, l, o, v = df["Close"], df["High"], df["Low"], df["Open"], df["Volume"]
-
-        # ── 預先計算所有指標（向量化，快）──
-        ma5_s   = sma(c, 5)
-        ma10_s  = sma(c, 10)
-        ma20_s  = sma(c, 20)
-        ma50_s  = sma(c, 50)
-        ma60_s  = sma(c, 60)
-        ma200_s = sma(c, 200)
-        atr14_s = atr(df, 14)
-        prior_M_high = h.rolling(params["high_window"]).max().shift(1)
-
-        pullback_mode  = params.get("pullback_mode", "回踩MA20")
-        pullback_upper = params["pullback_upper"]
-        pullback_lower = params.get("pullback_lower", 0.0)
-        ma_ref_s       = ma60_s if pullback_mode == "回踩MA60" else ma20_s
-        N, M           = params["momentum_days"], params["high_window"]
-        vol_limit      = params["vol_ratio"]
-        atr_buf_mult   = params.get("atr_buf", 0.5)
-
-        # ── 逐日掃描訊號 ──
-        for i in range(210, len(df) - 1):
-            try:
-                c0, c1, h1    = c.iloc[i], c.iloc[i-1], h.iloc[i-1]
-                ma5_0         = ma5_s.iloc[i]
-                ma10_0        = ma10_s.iloc[i]
-                ma20_0        = ma20_s.iloc[i]
-                ma50_0        = ma50_s.iloc[i]
-                ma60_0        = ma60_s.iloc[i]
-                ma200_0       = ma200_s.iloc[i]
-                atr_0         = atr14_s.iloc[i]
-                ma_ref        = ma_ref_s.iloc[i]
-
-                if any(pd.isna([c0, c1, h1, ma5_0, ma10_0, ma20_0,
-                                ma50_0, ma60_0, ma200_0, atr_0, ma_ref])):
-                    continue
-                if ma_ref == 0:
-                    continue
-
-                # ① 長線多頭
-                if not (ma50_0 > ma200_0 and c0 > ma200_0):
-                    continue
-
-                # ② 動能記憶（shift(1) 已含在 prior_M_high）
-                s_start = max(0, i - N)
-                if not (c.iloc[s_start:i] >= prior_M_high.iloc[s_start:i]).any():
-                    continue
-
-                # ③ 波段拉回
-                dist = (c0 - ma_ref) / ma_ref * 100
-                if not (pullback_lower <= dist <= pullback_upper):
-                    continue
-                if params.get("use_ma5")  and c0 <= ma5_0:
-                    continue
-                if params.get("use_ma10") and c0 <= ma10_0:
-                    continue
-
-                # ③+ 回踩確認
-                if params.get("touch_enabled", True):
-                    tw   = params.get("touch_window", 5)
-                    ttol = params.get("touch_tol", 3.0)
-                    i0   = max(0, i - tw + 1)
-                    if not (l.iloc[i0:i+1] <= ma_ref_s.iloc[i0:i+1] * (1 + ttol/100)).any():
-                        continue
-
-                # ④ 均線斜率
-                if pullback_mode == "回踩MA60":
-                    slope_val = (ma60_s.iloc[i] - ma60_s.iloc[i-10]) if i >= 10 else 0.0
-                else:
-                    slope_val = (ma20_s.iloc[i] - ma20_s.iloc[i-5])  if i >= 5  else 0.0
-                if slope_val < params.get("ma20_slope_min", -0.5):
-                    continue
-
-                # ⑤ 量縮
-                v3  = v.iloc[i-3:i].mean()
-                v20 = v.iloc[i-20:i].mean()
-                if pd.isna(v3) or pd.isna(v20) or v20 == 0 or v3/v20 >= vol_limit:
-                    continue
-
-                # ⑥ 止跌轉折
-                if strict:
-                    if not (c0 > h1):
-                        continue
-                else:
-                    ma20_1 = ma20_s.iloc[i-1]
-                    if not ((c0 > h1) or (c0 > ma20_0 and c1 < ma20_1)):
-                        continue
-
-                # ── 計算停損 / 目標 ──
-                swing_low  = l.iloc[max(0,i-19):i+1].min()
-                swing_high = h.iloc[max(0,i-19):i+1].max()
-                buf        = atr_0 * atr_buf_mult
-                stop       = max(swing_low - buf, ma_ref - buf, c0 * 0.90)
-                amp        = swing_high - swing_low
-                tgt_t1     = round(swing_high + amp * 0.272, 2)
-                tgt_t2     = round(swing_high + amp * 0.618, 2)
-
-                risk   = c0 - stop
-                reward = tgt_t1 - c0
-                rr     = round(reward / risk, 2) if risk > 0 else 0.0
-                if rr < params["min_rr"]:
-                    continue
-
-                # ── 進場：隔日開盤 ──
-                entry_price = o.iloc[i+1]
-                entry_date  = df.index[i+1]
-                signal_date = df.index[i]
-                tgt         = tgt_t1 if target_mode == "T1" else tgt_t2
-
-                # ── 往後追蹤 ──
-                result     = "到期"
-                exit_price = c.iloc[min(i+1+max_hold, len(df)-1)]
-                exit_date  = df.index[min(i+1+max_hold, len(df)-1)]
-                hold_days  = max_hold
-
-                for j in range(i+1, min(i+1+max_hold+1, len(df))):
-                    hold_days = j - (i+1)
-                    if l.iloc[j] <= stop:
-                        result, exit_price, exit_date = "停損", stop, df.index[j]
-                        break
-                    if h.iloc[j] >= tgt:
-                        result, exit_price, exit_date = "達標", tgt, df.index[j]
-                        break
-
-                ret_pct = (exit_price - entry_price) / entry_price * 100
-
-                trades.append({
-                    "代號":   sid,
-                    "名稱":   STOCK_NAME_MAP.get(sid, ""),
-                    "訊號日": signal_date.strftime("%Y-%m-%d"),
-                    "進場日": entry_date.strftime("%Y-%m-%d"),
-                    "進場價": round(entry_price, 1),
-                    "停損價": round(stop, 1),
-                    "目標":   round(tgt, 1),
-                    "出場日": exit_date.strftime("%Y-%m-%d"),
-                    "出場價": round(exit_price, 1),
-                    "結果":   result,
-                    "報酬%":  round(ret_pct, 2),
-                    "持有天": hold_days,
-                    "RR":     rr,
-                })
-            except Exception:
-                continue
-
-    df_trades = pd.DataFrame(trades)
-    if not df_trades.empty:
-        df_trades = df_trades.sort_values("訊號日").reset_index(drop=True)
-    return df_trades
-
-
-# ==============================================================================
-# ── 10. 主程式
+# ── 9. 主程式
 # ==============================================================================
 def main():
     token    = get_token()
@@ -1203,18 +1032,30 @@ def main():
         used = len(user_ids)
         st.progress(min(used/600, 1.0), text=f"每次抓取消耗 {used}/600 calls")
 
-    # ── 參數字典（兩個 tab 共用）──
-    params = dict(
-        momentum_days=momentum_days, high_window=high_window,
-        pullback_mode=pullback_mode,
-        pullback_ma=pullback_ma, pullback_lower=pullback_lower, pullback_upper=pullback_upper,
-        use_ma5=use_ma5, use_ma10=use_ma10,
-        vol_ratio=vol_ratio, min_rr=min_rr, atr_buf=atr_buf,
-        ma20_slope_min=ma20_slope_min,
-        touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol,
-    )
+    # ════════════════════════════════════════════════
+    # 主頁面邏輯
+    # 核心架構：「抓資料」與「篩選」完全分離
+    #
+    #  ┌─ run_btn 按下 ─────────────────────────────┐
+    #  │  呼叫 FinMind API（唯一消耗 token 的地方）  │
+    #  │  結果存入 st.session_state["data_dict"]     │
+    #  └────────────────────────────────────────────┘
+    #           ↓ 資料存活於整個 session
+    #  ┌─ 每次頁面 rerun（含滑動 Slider）───────────┐
+    #  │  直接從 session_state 取資料               │
+    #  │  重跑 run_filter()（純本地運算，<1秒）      │
+    #  │  完全不碰 FinMind                          │
+    #  └────────────────────────────────────────────┘
+    # ════════════════════════════════════════════════
+    params = dict(momentum_days=momentum_days, high_window=high_window,
+                  pullback_mode=pullback_mode,
+                  pullback_ma=pullback_ma, pullback_lower=pullback_lower, pullback_upper=pullback_upper,
+                  use_ma5=use_ma5, use_ma10=use_ma10,
+                  vol_ratio=vol_ratio, min_rr=min_rr, atr_buf=atr_buf,
+                  ma20_slope_min=ma20_slope_min,
+                  touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
 
-    # ── 抓取按鈕（唯一打 API 的地方，在 tab 外執行）──
+    # Step A：有按「抓取」按鈕 → 打 FinMind，存入 session_state
     if run_btn:
         pb = st.progress(0, text="⏳ 從 FinMind 並行抓取中（5 執行緒，約 30 秒，之後調參數不需再抓）...")
         with st.spinner(""):
@@ -1224,452 +1065,214 @@ def main():
         time.sleep(0.8)
         pb.empty()
 
-    # ════════════════════════════════════════════════
-    # 頁籤：選股 / 回測
-    # ════════════════════════════════════════════════
-    tab1, tab2 = st.tabs(["📊 選股", "🔬 回測"])
+    # Step B：有資料就永遠顯示篩選結果（不管有沒有按按鈕）
+    if has_data:
+        data = st.session_state["data_dict"]
+        ok   = st.session_state["success_cnt"]
+        skip = st.session_state["skip_cnt"]
 
-    # ════════════════════════════════════════════════
-    # TAB 1 — 選股
-    # ════════════════════════════════════════════════
-    with tab1:
-        if has_data:
-            data = st.session_state["data_dict"]
-            ok   = st.session_state["success_cnt"]
-            skip = st.session_state["skip_cnt"]
+        # 篩選（純本地運算，每次 rerun 都跑，< 1 秒，不打 API）
+        result_df, funnel = run_filter(data, params, strict=strict_mode)
 
-            result_df, funnel = run_filter(data, params, strict=strict_mode)
+        # ── 指標卡片 ──
+        k1, k2, k3, k4 = st.columns(4)
+        
+        def make_mini_card(title, val, extra=""):
+            return f"""
+            <div style="background:#0f1e33;border:1px solid rgba(59,130,246,0.2);
+                        border-radius:10px;padding:10px 10px 9px;text-align:center;
+                        min-height:82px;display:flex;flex-direction:column;
+                        justify-content:center;gap:3px;">
+                <div style="color:#64748b;font-size:0.65rem;text-transform:uppercase;
+                            letter-spacing:0.05em;line-height:1.3;">{title}</div>
+                <div style="color:#e2e8f0;font-family:'JetBrains Mono',monospace;
+                            font-size:1.05rem;font-weight:700;line-height:1.2;
+                            display:flex;justify-content:center;align-items:center;">
+                    {val} {extra}
+                </div>
+            </div>
+            """
+            
+        with k1:
+            st.markdown(make_mini_card("📊 已載入", f"{ok:,} 檔"), unsafe_allow_html=True)
+        with k2:
+            st.markdown(make_mini_card("⏭️ 無資料", f"{skip:,} 檔"), unsafe_allow_html=True)
+        with k3:
+            st.markdown(make_mini_card("🔓 篩選模式", "嚴格" if strict_mode else "寬鬆"), unsafe_allow_html=True)
+        with k4:
+            delta_html = f"<span style='color:#22c55e;font-size:0.75rem;margin-left:8px;font-family:\"Noto Sans TC\",sans-serif;'>(RR≥{min_rr})</span>" if len(result_df) else ""
+            st.markdown(make_mini_card("🎯 符合條件", f"{len(result_df):,} 檔", delta_html), unsafe_allow_html=True)
 
-            # ── 指標卡片 ──
-            k1, k2, k3, k4 = st.columns(4)
+        st.divider()
 
-            def make_mini_card(title, val, extra=""):
-                return f"""
+        # ── 條件漏斗分析（相對前一關卡通過率）──
+        st.markdown("#### 🔬 條件漏斗分析（每關相對前一關的通過率，找出最卡瓶頸）")
+        total   = len(data)
+        n_gates = len(funnel)
+        fcols   = st.columns(n_gates)
+        prev_cnt = total  # 初始母數為整個股票池
+        for i, (cname, cnt) in enumerate(funnel.items()):
+            pct_rel = cnt / prev_cnt * 100 if prev_cnt else 0
+            delta_txt = f"{pct_rel:.0f}% 通過" if i > 0 else f"{pct_rel:.0f}%（總池）"
+            arrow     = "↑" if pct_rel >= 50 else "↓"
+            clr = "#22c55e" if pct_rel >= 70 else "#fbbf24" if pct_rel >= 40 else "#f87171"
+            with fcols[i]:
+                st.markdown(f"""
                 <div style="background:#0f1e33;border:1px solid rgba(59,130,246,0.2);
                             border-radius:10px;padding:10px 10px 9px;text-align:center;
                             min-height:82px;display:flex;flex-direction:column;
                             justify-content:center;gap:3px;">
                     <div style="color:#64748b;font-size:0.65rem;text-transform:uppercase;
-                                letter-spacing:0.05em;line-height:1.3;">{title}</div>
+                                letter-spacing:0.05em;line-height:1.3;">{cname}</div>
                     <div style="color:#e2e8f0;font-family:'JetBrains Mono',monospace;
-                                font-size:1.05rem;font-weight:700;line-height:1.2;
-                                display:flex;justify-content:center;align-items:center;">
-                        {val} {extra}
+                                font-size:1.05rem;font-weight:700;line-height:1.2;">{cnt} 檔</div>
+                    <div style="color:{clr};font-size:0.68rem;font-weight:600;">
+                        {arrow} {delta_txt}
                     </div>
                 </div>
-                """
+                """, unsafe_allow_html=True)
+            prev_cnt = cnt
 
-            with k1:
-                st.markdown(make_mini_card("📊 已載入", f"{ok:,} 檔"), unsafe_allow_html=True)
-            with k2:
-                st.markdown(make_mini_card("⏭️ 無資料", f"{skip:,} 檔"), unsafe_allow_html=True)
-            with k3:
-                st.markdown(make_mini_card("🔓 篩選模式", "嚴格" if strict_mode else "寬鬆"), unsafe_allow_html=True)
-            with k4:
-                delta_html = f"<span style='color:#22c55e;font-size:0.75rem;margin-left:8px;font-family:\"Noto Sans TC\",sans-serif;'>(RR≥{min_rr})</span>" if len(result_df) else ""
-                st.markdown(make_mini_card("🎯 符合條件", f"{len(result_df):,} 檔", delta_html), unsafe_allow_html=True)
-
-            st.divider()
-
-            # ── 條件漏斗分析 ──
-            st.markdown("#### 🔬 條件漏斗分析（每關相對前一關的通過率，找出最卡瓶頸）")
-            total    = len(data)
-            n_gates  = len(funnel)
-            fcols    = st.columns(n_gates)
-            prev_cnt = total
-            for i, (cname, cnt) in enumerate(funnel.items()):
-                pct_rel   = cnt / prev_cnt * 100 if prev_cnt else 0
-                delta_txt = f"{pct_rel:.0f}% 通過" if i > 0 else f"{pct_rel:.0f}%（總池）"
-                arrow     = "↑" if pct_rel >= 50 else "↓"
-                clr = "#22c55e" if pct_rel >= 70 else "#fbbf24" if pct_rel >= 40 else "#f87171"
-                with fcols[i]:
-                    st.markdown(f"""
-                    <div style="background:#0f1e33;border:1px solid rgba(59,130,246,0.2);
-                                border-radius:10px;padding:10px 10px 9px;text-align:center;
-                                min-height:82px;display:flex;flex-direction:column;
-                                justify-content:center;gap:3px;">
-                        <div style="color:#64748b;font-size:0.65rem;text-transform:uppercase;
-                                    letter-spacing:0.05em;line-height:1.3;">{cname}</div>
-                        <div style="color:#e2e8f0;font-family:'JetBrains Mono',monospace;
-                                    font-size:1.05rem;font-weight:700;line-height:1.2;">{cnt} 檔</div>
-                        <div style="color:{clr};font-size:0.68rem;font-weight:600;">
-                            {arrow} {delta_txt}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                prev_cnt = cnt
-
-            bottleneck = min(funnel, key=funnel.get)
-            bn_cnt = funnel[bottleneck]
-            if bn_cnt < 5:
-                st.info(
-                    f"💡 **瓶頸：{bottleneck}**（僅 {bn_cnt} 檔通過）"
-                    f" → 建議{'切換寬鬆模式' if strict_mode else '放寬該條件參數'}"
-                )
-
-            st.divider()
-
-            # ── 結果表格 ──
-            if result_df.empty:
-                st.warning("⚠️ 無符合個股。請看上方漏斗找瓶頸，或切換寬鬆模式。")
-            else:
-                st.markdown(f"### 📋 篩選結果 — {len(result_df)} 檔（依 RR 降序）")
-                result_df = result_df.copy()
-                result_df["K線分析"] = result_df["代號"].apply(
-                    lambda sid: f"{KLINE_BASE_URL}?stock={sid}"
-                )
-                disp = [
-                    "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
-                    "量縮比","今日量/均量","均線斜率","距高點天數",
-                    "空間%","損益比(RR)","首波拉回","停損價","目標T1(1.272)","目標T2(1.618)",
-                ]
-                slope_col_help = "近10日 MA60 變化量；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 變化量；正=向上，負=下彎"
-                st.dataframe(
-                    result_df[disp],
-                    use_container_width=True,
-                    height=min(580, 45 + 38*len(result_df)),
-                    column_config={
-                        "K線分析":       st.column_config.LinkColumn(
-                                            "K線",
-                                            display_text="分析",
-                                            width=50,
-                                            help="點擊開啟 K 線分析，自動帶入代號",
-                                        ),
-                        "代號":          st.column_config.TextColumn("代號",  width=45),
-                        "名稱":          st.column_config.TextColumn("名稱",  width=60),
-                        "收盤價":        st.column_config.NumberColumn("收盤",  format="%.1f"),
-                        "漲跌幅(%)":     st.column_config.NumberColumn("漲跌",  format="%.1f%%"),
-                        "拉回深度(%)":   st.column_config.NumberColumn("拉回%", format="%.1f%%", width=60),
-                        "量縮比":        st.column_config.NumberColumn("量縮",  format="%.2f"),
-                        "今日量/均量":   st.column_config.NumberColumn("均量",  format="%.2f",
-                                            help="今日成交量 ÷ 20日均量；>0.8 轉折日量能回升"),
-                        "均線斜率":      st.column_config.NumberColumn("斜率",  format="%.1f",
-                                            help=slope_col_help),
-                        "距高點天數":    st.column_config.NumberColumn("高點",  format="%d天",
-                                            help="距 M 日高點的天數；越小表示型態越新鮮"),
-                        "停損價":        st.column_config.NumberColumn("停損",  format="%.1f"),
-                        "目標T1(1.272)": st.column_config.NumberColumn("目標T1", format="%.1f",
-                                            help="斐波那契1.272延伸，保守止盈目標，RR以此計算"),
-                        "目標T2(1.618)": st.column_config.NumberColumn("目標T2", format="%.1f",
-                                            help="斐波那契1.618延伸，波段核心目標"),
-                        "空間%":         st.column_config.NumberColumn("空間%", format="%.1f%%",
-                                            help="以 T1 目標價計算的潛在上漲空間"),
-                        "損益比(RR)":    st.column_config.NumberColumn("RR",    format="%.2f", width=55),
-                        "首波拉回":      st.column_config.TextColumn("首波",    width="small"),
-                    },
-                    hide_index=True,
-                )
-
-                st.divider()
-
-                # ── K 線圖 ──
-                st.markdown("### 📈 個股 K 線圖")
-                opts = [
-                    f"{r['代號']} {STOCK_NAME_MAP.get(r['代號'], '')}  RR={r['損益比(RR)']}  收={r['收盤價']}"
-                    for _, r in result_df.iterrows()
-                ]
-                sel = st.selectbox("選擇個股", opts, index=0)
-                idx = opts.index(sel)
-                sid = result_df.iloc[idx]["代號"]
-
-                if sid in data:
-                    stock_name = STOCK_NAME_MAP.get(sid, "")
-                    kline_url  = f"{KLINE_BASE_URL}?stock={sid}"
-                    st.markdown(
-                        f"""<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-                            <span style="font-family:monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0;">{sid} {stock_name}</span>
-                            <a href="{kline_url}" target="_blank" rel="noopener"
-                               style="display:inline-flex;align-items:center;gap:6px;
-                                      background:linear-gradient(135deg,#1d4ed8,#1e40af);
-                                      color:#fff;text-decoration:none;font-size:0.82rem;font-weight:600;
-                                      padding:6px 14px;border-radius:6px;
-                                      border:1px solid rgba(96,165,250,0.4);
-                                      transition:opacity .15s;">
-                                📈 進階 K 線分析 &nbsp;↗
-                            </a>
-                        </div>""",
-                        unsafe_allow_html=True,
-                    )
-                    st.plotly_chart(
-                        kline(data[sid], sid,
-                              stop_price=result_df.iloc[idx]["停損價"],
-                              target_t1=result_df.iloc[idx]["目標T1(1.272)"],
-                              target_t2=result_df.iloc[idx]["目標T2(1.618)"]),
-                        use_container_width=True,
-                    )
-                    row = result_df.iloc[idx]
-                    ka, kb, kc, kd, ke = st.columns(5)
-                    with ka: st.metric("收盤", f"${row['收盤價']:.2f}", delta=f"{row['漲跌幅(%)']:.2f}%")
-                    with kb: st.metric("停損", f"${row['停損價']:.2f}")
-                    with kc: st.metric("目標T1", f"${row['目標T1(1.272)']:.2f}")
-                    with kd: st.metric("目標T2", f"${row['目標T2(1.618)']:.2f}")
-                    with ke: st.metric("RR",  f"{row['損益比(RR)']:.2f}x")
-
-        else:
-            st.info("👈 點擊左側「🚀 抓取最新資料」開始，或等待每日 18:00 自動抓取。\n\n"
-                    "**資料載入一次後，調整任何篩選參數都不會再消耗 FinMind API。**")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown(f"| 參數 | 值 |\n|---|---|\n"
-                            f"| 動能回看 N | **{momentum_days}** 天 |\n"
-                            f"| 新高窗口 M | **{high_window}** 天 |\n"
-                            f"| 拉回基準 | **{'MA20' if pullback_ma==20 else 'MA60'}** |")
-            with c2:
-                st.markdown(f"| 參數 | 值 |\n|---|---|\n"
-                            f"| 拉回範圍 | **0% ～ +{pullback_upper:.1f}%** |\n"
-                            f"| 量縮比 Y | **{vol_ratio}** |\n"
-                            f"| 最低 RR | **{min_rr}x** |\n"
-                            f"| 股票池 | **{len(user_ids)}** 檔 |")
-
-        st.markdown("""<div class="risk-warn">
-            ⚠️ 本系統僅供技術分析參考，不構成投資建議。股市有風險，請嚴格執行停損。
-        </div>""", unsafe_allow_html=True)
-
-        st.markdown("""<div class="strat-info">
-            🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
-            <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
-            <strong>②動能記憶</strong>（近N日收盤曾突破前M日高，shift(1)修正）→
-            <strong>③波段拉回</strong>（Close 站在 MA20/MA60 上方 0~上限%，即均線回踩）→
-            <strong>④MA20斜率</strong>（近5日MA20變化>門檻，確保均線仍向上）→
-            <strong>⑤量縮洗盤</strong>（近3日量&lt;20日量×Y）→
-            <strong>⑥止跌轉折</strong>（今收&gt;昨高 或 站回均線）
-        </div>""", unsafe_allow_html=True)
-
-    # ════════════════════════════════════════════════
-    # TAB 2 — 回測
-    # ════════════════════════════════════════════════
-    with tab2:
-        if not has_data:
-            st.info("👈 請先在左側點擊「🚀 抓取最新資料」，載入後即可執行回測。")
-        else:
-            st.markdown("### 🔬 歷史回測")
-            st.caption(
-                "以相同篩選條件掃描每個歷史交易日，模擬訊號觸發後以**隔日開盤價進場**，"
-                "追蹤至停損 / 達標 / 持有到期出場。資料期間約 430 天。"
+        bottleneck = min(funnel, key=funnel.get)
+        bn_cnt = funnel[bottleneck]
+        if bn_cnt < 5:
+            st.info(
+                f"💡 **瓶頸：{bottleneck}**（僅 {bn_cnt} 檔通過）"
+                f" → 建議{'切換寬鬆模式' if strict_mode else '放寬該條件參數'}"
             )
 
-            # ── 回測專屬參數 ──
-            bc1, bc2, bc3 = st.columns(3)
-            with bc1:
-                bt_target = st.radio("止盈目標", ["T1（1.272）", "T2（1.618）"],
-                                     index=0, horizontal=True,
-                                     help="T1=保守目標；T2=波段最大目標")
-            with bc2:
-                bt_hold = st.slider("最大持有天數", 5, 60, 30, 5,
-                                    help="超過此天數仍未觸停損或達標，以當日收盤出場")
-            with bc3:
-                bt_strict = st.toggle("嚴格進場（今收>昨高）", value=True,
-                                      help="關閉則允許站回均線也算訊號，樣本數會增加")
+        st.divider()
 
-            run_bt = st.button("▶ 執行回測", type="primary", use_container_width=False)
+        # ── 結果表格 ──
+        if result_df.empty:
+            st.warning("⚠️ 無符合個股。請看上方漏斗找瓶頸，或切換寬鬆模式。")
+        else:
+            st.markdown(f"### 📋 篩選結果 — {len(result_df)} 檔（依 RR 降序）")
+            # 加入 K 線連結欄位
+            result_df = result_df.copy()
+            result_df["K線分析"] = result_df["代號"].apply(
+                lambda sid: f"{KLINE_BASE_URL}?stock={sid}"
+            )
+            disp = [
+                "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
+                "量縮比","今日量/均量","均線斜率","距高點天數",
+                "空間%","損益比(RR)","首波拉回","停損價","目標T1(1.272)","目標T2(1.618)",
+            ]
+            slope_col_label = "MA60斜率(10日)" if params.get("pullback_mode") == "回踩MA60" else "MA20斜率(5日)"
+            slope_col_help  = "近10日 MA60 變化量；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 變化量；正=向上，負=下彎"
+            st.dataframe(
+                result_df[disp],
+                use_container_width=True,
+                height=min(580, 45 + 38*len(result_df)),
+                column_config={
+                    "K線分析":       st.column_config.LinkColumn(
+                                        "K線",
+                                        display_text="分析",
+                                        width=50,
+                                        help="點擊開啟 K 線分析，自動帶入代號",
+                                    ),
+                    "代號":          st.column_config.TextColumn("代號",  width=45),
+                    "名稱":          st.column_config.TextColumn("名稱",  width=60),
+                    "收盤價":        st.column_config.NumberColumn("收盤",  format="%.1f"),
+                    "漲跌幅(%)":     st.column_config.NumberColumn("漲跌",  format="%.1f%%"),
+                    "拉回深度(%)":   st.column_config.NumberColumn("拉回%", format="%.1f%%", width=60),
+                    "量縮比":        st.column_config.NumberColumn("量縮",  format="%.2f"),
+                    "今日量/均量":   st.column_config.NumberColumn("均量",  format="%.2f",
+                                        help="今日成交量 ÷ 20日均量；>0.8 轉折日量能回升"),
+                    "均線斜率":      st.column_config.NumberColumn("斜率",  format="%.1f",
+                                        help=slope_col_help),
+                    "距高點天數":    st.column_config.NumberColumn("高點",  format="%d天",
+                                        help="距 M 日高點的天數；越小表示型態越新鮮"),
+                    "停損價":        st.column_config.NumberColumn("停損",  format="%.1f"),
+                    "目標T1(1.272)": st.column_config.NumberColumn("目標T1", format="%.1f",
+                                        help="斐波那契1.272延伸，保守止盈目標，RR以此計算"),
+                    "目標T2(1.618)": st.column_config.NumberColumn("目標T2", format="%.1f",
+                                        help="斐波那契1.618延伸，波段核心目標"),
+                    "空間%":         st.column_config.NumberColumn("空間%", format="%.1f%%",
+                                        help="以 T1 目標價計算的潛在上漲空間"),
+                    "損益比(RR)":    st.column_config.NumberColumn("RR",    format="%.2f", width=55),
+                    "首波拉回":      st.column_config.TextColumn("首波",    width="small"),
+                },
+                hide_index=True,
+            )
 
-            if run_bt or st.session_state.get("bt_result") is not None:
-                if run_bt:
-                    with st.spinner("⏳ 回測運算中，請稍候…"):
-                        bt_data   = st.session_state["data_dict"]
-                        tgt_mode  = "T1" if bt_target.startswith("T1") else "T2"
-                        bt_df     = run_backtest(bt_data, params,
-                                                 max_hold=bt_hold,
-                                                 target_mode=tgt_mode,
-                                                 strict=bt_strict)
-                    st.session_state["bt_result"] = bt_df
-                else:
-                    bt_df = st.session_state["bt_result"]
+            st.divider()
 
-                if bt_df.empty:
-                    st.warning("回測期間內無符合條件的訊號，請放寬參數後重試。")
-                else:
-                    # ── 統計 ──
-                    total_trades = len(bt_df)
-                    wins   = (bt_df["結果"] == "達標").sum()
-                    losses = (bt_df["結果"] == "停損").sum()
-                    exps   = total_trades - wins - losses
-                    win_rate     = wins / total_trades * 100
-                    avg_ret      = bt_df["報酬%"].mean()
-                    avg_win_ret  = bt_df.loc[bt_df["結果"]=="達標",  "報酬%"].mean()
-                    avg_los_ret  = bt_df.loc[bt_df["結果"]=="停損",  "報酬%"].mean()
-                    avg_hold     = bt_df["持有天"].mean()
-                    max_dd_trade = bt_df["報酬%"].min()
+            # ── K 線圖 ──
+            st.markdown("### 📈 個股 K 線圖")
+            opts = [
+                f"{r['代號']} {STOCK_NAME_MAP.get(r['代號'], '')}  RR={r['損益比(RR)']}  收={r['收盤價']}"
+                for _, r in result_df.iterrows()
+            ]
+            sel = st.selectbox("選擇個股", opts, index=0)
+            idx = opts.index(sel)
+            sid = result_df.iloc[idx]["代號"]
 
-                    # ── 摘要卡片 ──
-                    st.divider()
-                    mc1,mc2,mc3,mc4,mc5 = st.columns(5)
-                    def bt_card(label, val, color="#e2e8f0"):
-                        return f"""<div style="background:#0f1e33;border:1px solid rgba(59,130,246,0.2);
-                            border-radius:10px;padding:12px 8px;text-align:center;">
-                            <div style="color:#64748b;font-size:0.65rem;text-transform:uppercase;
-                                        letter-spacing:0.05em;margin-bottom:6px;">{label}</div>
-                            <div style="color:{color};font-family:'JetBrains Mono',monospace;
-                                        font-size:1.1rem;font-weight:700;">{val}</div>
-                        </div>"""
-                    with mc1:
-                        st.markdown(bt_card("總訊號數", f"{total_trades}"), unsafe_allow_html=True)
-                    with mc2:
-                        clr = "#22c55e" if win_rate >= 50 else "#f87171"
-                        st.markdown(bt_card("勝率", f"{win_rate:.1f}%", clr), unsafe_allow_html=True)
-                    with mc3:
-                        clr = "#22c55e" if avg_ret >= 0 else "#f87171"
-                        st.markdown(bt_card("平均報酬", f"{avg_ret:+.2f}%", clr), unsafe_allow_html=True)
-                    with mc4:
-                        st.markdown(bt_card("平均持有天", f"{avg_hold:.1f}天"), unsafe_allow_html=True)
-                    with mc5:
-                        st.markdown(bt_card("達標/停損/到期",
-                                            f"{wins} / {losses} / {exps}"), unsafe_allow_html=True)
+            if sid in data:
+                # ── K 線進階分析超連結 ──
+                stock_name = STOCK_NAME_MAP.get(sid, "")
+                kline_url  = f"{KLINE_BASE_URL}?stock={sid}"
+                st.markdown(
+                    f"""<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+                        <span style="font-family:monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0;">{sid} {stock_name}</span>
+                        <a href="{kline_url}" target="_blank" rel="noopener"
+                           style="display:inline-flex;align-items:center;gap:6px;
+                                  background:linear-gradient(135deg,#1d4ed8,#1e40af);
+                                  color:#fff;text-decoration:none;font-size:0.82rem;font-weight:600;
+                                  padding:6px 14px;border-radius:6px;
+                                  border:1px solid rgba(96,165,250,0.4);
+                                  transition:opacity .15s;">
+                            📈 進階 K 線分析 &nbsp;↗
+                        </a>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                st.plotly_chart(
+                    kline(data[sid], sid,
+                          stop_price=result_df.iloc[idx]["停損價"],
+                          target_t1=result_df.iloc[idx]["目標T1(1.272)"],
+                          target_t2=result_df.iloc[idx]["目標T2(1.618)"]),
+                    use_container_width=True,
+                )
+                row = result_df.iloc[idx]
+                ka, kb, kc, kd, ke = st.columns(5)
+                with ka: st.metric("收盤", f"${row['收盤價']:.2f}", delta=f"{row['漲跌幅(%)']:.2f}%")
+                with kb: st.metric("停損", f"${row['停損價']:.2f}")
+                with kc: st.metric("目標T1", f"${row['目標T1(1.272)']:.2f}")
+                with kd: st.metric("目標T2", f"${row['目標T2(1.618)']:.2f}")
+                with ke: st.metric("RR",  f"{row['損益比(RR)']:.2f}x")
 
-                    st.divider()
+    else:
+        # 尚無資料
+        st.info("👈 點擊左側「🚀 抓取最新資料」開始，或等待每日 18:00 自動抓取。\n\n"
+                "**資料載入一次後，調整任何篩選參數都不會再消耗 FinMind API。**")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"| 參數 | 值 |\n|---|---|\n"
+                        f"| 動能回看 N | **{momentum_days}** 天 |\n"
+                        f"| 新高窗口 M | **{high_window}** 天 |\n"
+                        f"| 拉回基準 | **{'MA20' if pullback_ma==20 else 'MA60'}** |")
+        with c2:
+            st.markdown(f"| 參數 | 值 |\n|---|---|\n"
+                        f"| 拉回範圍 | **0% ～ +{pullback_upper:.1f}%** |\n"
+                        f"| 量縮比 Y | **{vol_ratio}** |\n"
+                        f"| 最低 RR | **{min_rr}x** |\n"
+                        f"| 股票池 | **{len(user_ids)}** 檔 |")
 
-                    # ── 圖表區 ──
-                    ch1, ch2 = st.columns(2)
-
-                    # 左：報酬分布直方圖
-                    with ch1:
-                        st.markdown("##### 📊 報酬率分布")
-                        hist_fig = go.Figure()
-                        hist_fig.add_trace(go.Histogram(
-                            x=bt_df["報酬%"], nbinsx=30,
-                            marker_color=[
-                                "#22c55e" if v >= 0 else "#ef4444"
-                                for v in bt_df["報酬%"]
-                            ],
-                            name="報酬%",
-                        ))
-                        hist_fig.add_vline(x=0, line=dict(color="#64748b", dash="dash", width=1))
-                        hist_fig.add_vline(x=avg_ret,
-                                           line=dict(color="#fbbf24", dash="dot", width=1.5),
-                                           annotation_text=f"均值 {avg_ret:+.2f}%",
-                                           annotation_position="top right",
-                                           annotation_font=dict(color="#fbbf24", size=10))
-                        hist_fig.update_layout(
-                            paper_bgcolor="#0a0e1a", plot_bgcolor="#0a0e1a",
-                            font=dict(color="#e2e8f0", size=11),
-                            margin=dict(l=8, r=8, t=20, b=8),
-                            height=280,
-                            showlegend=False,
-                            xaxis=dict(title="報酬%", gridcolor="rgba(59,130,246,0.07)"),
-                            yaxis=dict(title="次數",  gridcolor="rgba(59,130,246,0.07)"),
-                        )
-                        st.plotly_chart(hist_fig, use_container_width=True)
-
-                    # 右：達標/停損/到期 圓餅圖
-                    with ch2:
-                        st.markdown("##### 🥧 出場分布")
-                        pie_labels  = ["達標", "停損", "到期"]
-                        pie_values  = [wins, losses, exps]
-                        pie_colors  = ["#22c55e", "#ef4444", "#64748b"]
-                        pie_fig = go.Figure(go.Pie(
-                            labels=pie_labels, values=pie_values,
-                            marker=dict(colors=pie_colors),
-                            hole=0.45,
-                            textinfo="label+percent",
-                            textfont=dict(color="#e2e8f0", size=12),
-                        ))
-                        pie_fig.update_layout(
-                            paper_bgcolor="#0a0e1a",
-                            font=dict(color="#e2e8f0"),
-                            margin=dict(l=8, r=8, t=20, b=8),
-                            height=280,
-                            showlegend=False,
-                        )
-                        st.plotly_chart(pie_fig, use_container_width=True)
-
-                    # 累積損益曲線
-                    st.markdown("##### 📈 累積損益曲線（每筆等權，%）")
-                    bt_sorted = bt_df.sort_values("出場日").reset_index(drop=True)
-                    bt_sorted["累積報酬%"] = bt_sorted["報酬%"].cumsum()
-                    curve_fig = go.Figure()
-                    curve_fig.add_trace(go.Scatter(
-                        x=bt_sorted.index, y=bt_sorted["累積報酬%"],
-                        mode="lines",
-                        line=dict(color="#60a5fa", width=2),
-                        fill="tozeroy",
-                        fillcolor="rgba(96,165,250,0.08)",
-                        name="累積報酬%",
-                        hovertemplate="第%{x}筆 | 累積: %{y:.2f}%<extra></extra>",
-                    ))
-                    curve_fig.add_hline(y=0, line=dict(color="#64748b", dash="dash", width=1))
-                    curve_fig.update_layout(
-                        paper_bgcolor="#0a0e1a", plot_bgcolor="#0a0e1a",
-                        font=dict(color="#e2e8f0", size=11),
-                        margin=dict(l=8, r=8, t=10, b=8),
-                        height=240,
-                        showlegend=False,
-                        xaxis=dict(title="交易序號", gridcolor="rgba(59,130,246,0.07)"),
-                        yaxis=dict(title="累積報酬%", gridcolor="rgba(59,130,246,0.07)"),
-                    )
-                    st.plotly_chart(curve_fig, use_container_width=True)
-
-                    st.divider()
-
-                    # ── 逐筆明細 ──
-                    st.markdown(f"##### 📋 逐筆交易明細（共 {total_trades} 筆）")
-
-                    def color_result(val):
-                        if val == "達標": return "color: #22c55e; font-weight:600"
-                        if val == "停損": return "color: #ef4444; font-weight:600"
-                        return "color: #94a3b8"
-
-                    def color_ret(val):
-                        return "color: #22c55e" if val >= 0 else "color: #ef4444"
-
-                    styled = (
-                        bt_df.style
-                        .applymap(color_result, subset=["結果"])
-                        .applymap(color_ret,    subset=["報酬%"])
-                        .format({"進場價": "{:.1f}", "停損價": "{:.1f}",
-                                 "目標":   "{:.1f}", "出場價": "{:.1f}",
-                                 "報酬%":  "{:+.2f}%", "RR": "{:.2f}"})
-                    )
-                    st.dataframe(
-                        styled,
-                        use_container_width=True,
-                        height=min(600, 45 + 35*len(bt_df)),
-                        column_config={
-                            "代號":   st.column_config.TextColumn("代號", width=55),
-                            "名稱":   st.column_config.TextColumn("名稱", width=65),
-                            "訊號日": st.column_config.TextColumn("訊號日", width=90),
-                            "進場日": st.column_config.TextColumn("進場日", width=90),
-                            "出場日": st.column_config.TextColumn("出場日", width=90),
-                            "持有天": st.column_config.NumberColumn("持有天", format="%d天"),
-                            "結果":   st.column_config.TextColumn("結果",  width=55),
-                            "報酬%":  st.column_config.NumberColumn("報酬%", format="%.2f%%"),
-                            "RR":     st.column_config.NumberColumn("RR",   format="%.2f"),
-                        },
-                        hide_index=True,
-                    )
-
-                    # ── 各股票勝率排行 ──
-                    st.divider()
-                    st.markdown("##### 🏆 各股票勝率排行（≥3筆訊號）")
-                    grp = bt_df.groupby(["代號","名稱"]).agg(
-                        訊號數=("結果","count"),
-                        達標數=("結果", lambda x: (x=="達標").sum()),
-                        平均報酬=("報酬%","mean"),
-                    ).reset_index()
-                    grp["勝率%"] = (grp["達標數"] / grp["訊號數"] * 100).round(1)
-                    grp["平均報酬"] = grp["平均報酬"].round(2)
-                    grp = grp[grp["訊號數"] >= 3].sort_values("勝率%", ascending=False).reset_index(drop=True)
-                    if grp.empty:
-                        st.caption("訊號數 ≥ 3 的股票不足，請放寬參數。")
-                    else:
-                        st.dataframe(
-                            grp,
-                            use_container_width=True,
-                            height=min(420, 45 + 35*len(grp)),
-                            column_config={
-                                "代號": st.column_config.TextColumn("代號", width=55),
-                                "名稱": st.column_config.TextColumn("名稱", width=65),
-                                "訊號數": st.column_config.NumberColumn("訊號數"),
-                                "達標數": st.column_config.NumberColumn("達標數"),
-                                "勝率%":  st.column_config.ProgressColumn(
-                                    "勝率%", min_value=0, max_value=100, format="%.1f%%"),
-                                "平均報酬": st.column_config.NumberColumn("均報酬%", format="%+.2f%%"),
-                            },
-                            hide_index=True,
-                        )
-
-            st.markdown("""<div class="risk-warn">
-                ⚠️ 回測為歷史模擬，不代表未來績效。樣本僅約 430 天，結果供參考用。
-            </div>""", unsafe_allow_html=True)
+    st.markdown("""<div class="risk-warn">
+        ⚠️ 本系統僅供技術分析參考，不構成投資建議。股市有風險，請嚴格執行停損。
+    </div>""", unsafe_allow_html=True)
+    
+    # 將策略說明移至最下方
+    st.markdown("""<div class="strat-info">
+        🎯 <strong>策略核心：</strong>多頭趨勢中的波段拉回止跌轉折高損益比選股<br>
+        <strong>①長線多頭</strong>（MA50>MA200, Close>MA200）→
+        <strong>②動能記憶</strong>（近N日收盤曾突破前M日高，shift(1)修正）→
+        <strong>③波段拉回</strong>（Close 站在 MA20/MA60 上方 0~上限%，即均線回踩）→
+        <strong>④MA20斜率</strong>（近5日MA20變化>門檻，確保均線仍向上）→
+        <strong>⑤量縮洗盤</strong>（近3日量&lt;20日量×Y）→
+        <strong>⑥止跌轉折</strong>（今收&gt;昨高 或 站回均線）
+    </div>""", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
