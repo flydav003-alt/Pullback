@@ -1026,16 +1026,16 @@ def main():
         st.markdown("**⑥ 損益比門檻 & 停損/目標**")
         min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5,
             help="損益比低於此值的股票不顯示。RR=1.5 代表潛在獲利是潛在虧損的1.5倍")
-        atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 1.5, 0.5, 0.1,
-            help="停損線 = 前低（或均線）再往下 N 倍ATR。倍數越大停損越寬，越不容易被假跌破洗出去。預設0.5")
+        atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 1.5, 0.8, 0.1,
+            help="停損線 = 前低（或均線）再往下 N 倍ATR。倍數越大停損越寬，越不容易被假跌破洗出去。預設0.8")
         max_stop_pct = st.slider("最大停損幅度 %", 5.0, 20.0, 10.0, 0.5,
             help="停損硬上限。10%=不允許停損距離超過買價10%")
-        swing_window = st.slider("波段計算窗口（日）", 10, 60, 20, 5,
+        swing_window = st.slider("波段計算窗口（日）", 10, 60, 30, 5,
             help="用來計算前高、前低與目標價。大波段可拉到30~40")
-        fib_t1 = st.slider("T1延伸比例", 0.1, 0.8, 0.272, 0.01,
-            help="T1=前高+振幅×比例。0.272約等於1.272延伸")
-        fib_t2 = st.slider("T2延伸比例", 0.3, 1.2, 0.618, 0.01,
-            help="T2=前高+振幅×比例。0.618約等於1.618延伸")
+        fib_t1 = st.slider("T1延伸比例", 0.1, 0.8, 0.382, 0.01,
+            help="T1=前高+振幅×比例。0.382較適合波段第一段止盈")
+        fib_t2 = st.slider("T2延伸比例", 0.3, 1.2, 1.0, 0.01,
+            help="T2=前高+振幅×比例。1.0較適合波段第二段目標")
         st.caption(f"📐 停損緩衝 = ATR(14) × {atr_buf}；最大停損 {max_stop_pct:.1f}%；窗口 {swing_window} 日")
         st.divider()
 
@@ -1211,7 +1211,7 @@ def main():
             disp = [
                 "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
                 "量縮比","今日量/均量","均線斜率%","轉折確認","距高點天數",
-                "空間%","損益比(RR)","首波拉回","停損價","目標T1(1.272)","目標T2(1.618)",
+                "空間%","損益比(RR)","首波拉回","停損價","目標T1","目標T2",
             ]
             slope_col_help  = "近10日 MA60 百分比變化；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 百分比變化；正=向上，負=下彎"
             st.dataframe(
@@ -1240,10 +1240,10 @@ def main():
                     "距高點天數":    st.column_config.NumberColumn("高點",  format="%d天",
                                         help="距 M 日高點的天數；越小表示型態越新鮮"),
                     "停損價":        st.column_config.NumberColumn("停損",  format="%.1f"),
-                    "目標T1(1.272)": st.column_config.NumberColumn("目標T1", format="%.1f",
-                                        help="斐波那契1.272延伸，保守止盈目標，RR以此計算"),
-                    "目標T2(1.618)": st.column_config.NumberColumn("目標T2", format="%.1f",
-                                        help="斐波那契1.618延伸，波段核心目標"),
+                    "目標T1":        st.column_config.NumberColumn("目標T1", format="%.1f",
+                                        help="第一段止盈目標，RR以此計算"),
+                    "目標T2":        st.column_config.NumberColumn("目標T2", format="%.1f",
+                                        help="第二段波段目標"),
                     "空間%":         st.column_config.NumberColumn("空間%", format="%.1f%%",
                                         help="以 T1 目標價計算的潛在上漲空間"),
                     "損益比(RR)":    st.column_config.NumberColumn("RR",    format="%.2f", width=55),
@@ -1286,16 +1286,16 @@ def main():
                 st.plotly_chart(
                     kline(data[sid], sid,
                           stop_price=result_df.iloc[idx]["停損價"],
-                          target_t1=result_df.iloc[idx]["目標T1(1.272)"],
-                          target_t2=result_df.iloc[idx]["目標T2(1.618)"]),
+                          target_t1=result_df.iloc[idx]["目標T1"],
+                          target_t2=result_df.iloc[idx]["目標T2"]),
                     use_container_width=True,
                 )
                 row = result_df.iloc[idx]
                 ka, kb, kc, kd, ke = st.columns(5)
                 with ka: st.metric("收盤", f"${row['收盤價']:.2f}", delta=f"{row['漲跌幅(%)']:.2f}%")
                 with kb: st.metric("停損", f"${row['停損價']:.2f}")
-                with kc: st.metric("目標T1", f"${row['目標T1(1.272)']:.2f}")
-                with kd: st.metric("目標T2", f"${row['目標T2(1.618)']:.2f}")
+                with kc: st.metric("目標T1", f"${row['目標T1']:.2f}")
+                with kd: st.metric("目標T2", f"${row['目標T2']:.2f}")
                 with ke: st.metric("RR",  f"{row['損益比(RR)']:.2f}x")
 
     else:
