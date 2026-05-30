@@ -64,52 +64,48 @@ html, body { background-color: #0a0e1a !important; }
     display: none !important; 
 }
 
-/* ── sidebar 收起時，header 左上角的展開按鈕（double_arrow_right） ── */
-/* 隱藏原生 svg icon 和文字 */
-[data-testid="stSidebarOpenNavButton"] svg,
-[data-testid="stSidebarOpenNavButton"] span {
-    display: none !important;
+/* ── sidebar 收起時，header 左上角的展開按鈕（double_arrow_right Material Icon） ──
+   Material Icons 是字體渲染，不是 svg，必須用 font-size:0 消除，再用 ::after 補中文  */
+
+/* 把 Material Icon 字體縮成 0（消除 double_arrow_right 文字） */
+[data-testid="stSidebarOpenNavButton"] button,
+[data-testid="stSidebarOpenNavButton"] button * {
+    font-size: 0 !important;
+    color: transparent !important;
+    visibility: hidden !important;
 }
-/* 整個容器：藍色按鈕樣式，跟摺疊按鈕對稱 */
+/* 外層容器：藍色按鈕樣式 */
 [data-testid="stSidebarOpenNavButton"] {
     background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
     border-radius: 8px !important;
     margin: 10px !important;
-    padding: 0 !important;
+    padding: 2px !important;
     box-shadow: 0 4px 12px rgba(59,130,246,0.4) !important;
-    overflow: visible !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 90px !important;
+    min-height: 36px !important;
+    position: relative !important;
+    cursor: pointer !important;
 }
 [data-testid="stSidebarOpenNavButton"]:hover {
     background: linear-gradient(135deg, #2563eb, #60a5fa) !important;
     box-shadow: 0 6px 16px rgba(59,130,246,0.6) !important;
+    transform: translateY(-2px) !important;
 }
-/* 子 button：text-indent 推走英文，::after 注入中文 */
-[data-testid="stSidebarOpenNavButton"] button {
-    background: transparent !important;
-    border: none !important;
-    padding: 8px 24px !important;
-    cursor: pointer !important;
-    text-indent: -9999px !important;
-    overflow: hidden !important;
-    white-space: nowrap !important;
-    min-width: 90px !important;
-    min-height: 36px !important;
-    position: relative !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
-[data-testid="stSidebarOpenNavButton"] button::after {
+/* 中文注入在外層容器的 ::after（button 內容已清空，不怕遮擋） */
+[data-testid="stSidebarOpenNavButton"]::after {
     content: "✨ 展開" !important;
-    text-indent: 0 !important;
     color: #ffffff !important;
-    font-weight: 700 !important;
     font-size: 1rem !important;
+    font-weight: 700 !important;
     letter-spacing: 2px !important;
     font-family: 'Noto Sans TC', sans-serif !important;
+    visibility: visible !important;
     position: absolute !important;
-    display: block !important;
     pointer-events: none !important;
+    display: block !important;
 }
 
 /* ==========================================================
