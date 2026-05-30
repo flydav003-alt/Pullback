@@ -612,25 +612,38 @@ def run_filter(
                 continue
             funnel["⑥ 止跌轉折"] += 1
 
-            # 第一波拉回
-            # MA60 大波段模式用較長窗口（120日）避免誤判首波
-            first_wave_window = 120 if pullback_mode == "回踩MA60" else M
+            # 第一波拉回判斷（優化版）
+            # 計算從高點後的拉回次數，只有一次（或仍在首次拉回附近）才標為首波
             ma_ref_series = ma60_s if pullback_mode == "回踩MA60" else ma20_s
+            first = False
             try:
-                peak_idx = h.iloc[-first_wave_window:].idxmax()
-                peak_pos = df.index.get_loc(peak_idx)
-                already_pulled = False
+                peak_idx    = h.iloc[-M:].idxmax()
+                peak_pos    = df.index.get_loc(peak_idx)
+                current_pos = len(df) - 1
+
+                pullback_count = 0
+                first_pull_pos = None
+
                 # 從高點後一根掃到昨天（不含今天，避免把當前這次算進去）
-                for pos in range(peak_pos + 1, len(c) - 1):
-                    ci    = c.iloc[pos]
-                    ma_i  = ma_ref_series.iloc[pos]
+                for pos in range(peak_pos + 1, current_pos):
+                    ci   = c.iloc[pos]
+                    ma_i = ma_ref_series.iloc[pos]
                     if pd.isna(ci) or pd.isna(ma_i) or ma_i == 0:
                         continue
-                    d_i = (ci - ma_i) / ma_i * 100
-                    if p["pullback_lower"] <= d_i <= p["pullback_upper"]:
-                        already_pulled = True
-                        break
-                first = not already_pulled
+                    dist_i = (ci - ma_i) / ma_i * 100
+                    if p["pullback_lower"] <= dist_i <= p["pullback_upper"]:
+                        pullback_count += 1
+                        if first_pull_pos is None:
+                            first_pull_pos = pos
+
+                # 從未拉回過 → 這次是首波
+                if pullback_count == 0:
+                    first = True
+                # 只有一次拉回且距今 ≤ 8 個交易日 → 視為仍在首波區
+                elif pullback_count == 1 and (current_pos - first_pull_pos <= 8):
+                    first = True
+                else:
+                    first = False
             except Exception:
                 first = False  # 無法判斷時保守標為非首波
 
@@ -684,6 +697,7 @@ def run_filter(
                 "停損價":        round(stop, 2),
                 "目標T1(1.272)": target_t1,
                 "目標T2(1.618)": target_t2,
+                "空間%":         round((target_t1 - c0) / c0 * 100, 1) if c0 > 0 else 0,
                 "損益比(RR)":    rr,
                 "首波拉回":      "✅" if first else "—",
                 "MA20":          round(ma20_0, 2),
@@ -1142,7 +1156,7 @@ def main():
             disp = [
                 "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
                 "量縮比","今日量/均量","均線斜率","距高點天數",
-                "停損價","目標T1(1.272)","目標T2(1.618)","損益比(RR)","首波拉回",
+                "停損價","目標T1(1.272)","目標T2(1.618)","空間%","損益比(RR)","首波拉回",
             ]
             slope_col_label = "MA60斜率(10日)" if params.get("pullback_mode") == "回踩MA60" else "MA20斜率(5日)"
             slope_col_help  = "近10日 MA60 變化量；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 變化量；正=向上，負=下彎"
@@ -1163,17 +1177,19 @@ def main():
                     "漲跌幅(%)":     st.column_config.NumberColumn("漲跌", format="%.2f%%"),
                     "拉回深度(%)":   st.column_config.NumberColumn("拉回%", format="%.2f%%"),
                     "量縮比":        st.column_config.NumberColumn("量縮比", format="%.2f"),
-                    "今日量/均量":   st.column_config.NumberColumn("今日量/均量", format="%.2f",
+                    "今日量/均量":   st.column_config.NumberColumn("均量", format="%.2f",
                                         help="今日成交量 ÷ 20日均量；>0.8 轉折日量能回升"),
-                    "均線斜率":      st.column_config.NumberColumn(slope_col_label, format="%.3f",
+                    "均線斜率":      st.column_config.NumberColumn("斜率", format="%.3f",
                                         help=slope_col_help),
-                    "距高點天數":    st.column_config.NumberColumn("距高點天", format="%d天",
+                    "距高點天數":    st.column_config.NumberColumn("離高點", format="%d天",
                                         help="距 M 日高點的天數；越小表示型態越新鮮"),
                     "停損價":        st.column_config.NumberColumn("停損", format="%.2f"),
                     "目標T1(1.272)": st.column_config.NumberColumn("目標T1", format="%.2f",
                                         help="斐波那契1.272延伸，保守止盈目標，RR以此計算"),
                     "目標T2(1.618)": st.column_config.NumberColumn("目標T2", format="%.2f",
                                         help="斐波那契1.618延伸，波段核心目標"),
+                    "空間%":         st.column_config.NumberColumn("空間%", format="%.1f%%",
+                                        help="以 T1 目標價計算的潛在上漲空間"),
                     "損益比(RR)":    st.column_config.NumberColumn("RR", format="%.2f"),
                     "首波拉回":      st.column_config.TextColumn("首波", width="small"),
                 },
