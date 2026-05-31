@@ -447,6 +447,32 @@ def atr(df: pd.DataFrame, w: int = 14) -> pd.Series:
     return tr.rolling(w).mean()
 
 
+def rsi(s: pd.Series, w: int = 14) -> pd.Series:
+    delta = s.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / w, adjust=False, min_periods=w).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / w, adjust=False, min_periods=w).mean()
+    rs = gain / loss.replace(0, np.nan)
+    return (100 - 100 / (1 + rs)).fillna(100)
+
+
+def is_volume_decreasing(v: pd.Series) -> bool:
+    last3 = v.iloc[-4:-1]
+    if len(last3) < 3 or last3.isna().any():
+        return False
+    return bool(last3.iloc[0] > last3.iloc[1] > last3.iloc[2])
+
+
+def bullish_body_ratio(df: pd.DataFrame) -> float:
+    o0 = df["Open"].iloc[-1]
+    h0 = df["High"].iloc[-1]
+    l0 = df["Low"].iloc[-1]
+    c0 = df["Close"].iloc[-1]
+    day_range = h0 - l0
+    if pd.isna(day_range) or day_range <= 0 or c0 <= o0:
+        return 0.0
+    return float((c0 - o0) / day_range)
+
+
 # ==============================================================================
 # ── 6. 篩選策略（含條件漏斗統計）
 #
@@ -597,6 +623,18 @@ def run_filter(
                 slope_val = (ma20_0 / slope_base - 1) * 100 if slope_base and not pd.isna(slope_base) else 0.0
             if slope_val < p.get("ma_slope_pct_min", 0.0):
                 continue
+            if p.get("use_rsi_filter", False):
+                rsi_s = rsi(c, 14)
+                rsi_0 = rsi_s.iloc[-1]
+                if pd.isna(rsi_0) or not (p.get("rsi_min", 35.0) <= rsi_0 <= p.get("rsi_max", 65.0)):
+                    continue
+                if p.get("rsi_require_rebound", False):
+                    lookback = max(2, int(p.get("rsi_rebound_lookback", 5)))
+                    recent_rsi = rsi_s.iloc[-lookback:]
+                    if recent_rsi.isna().all() or recent_rsi.min() > p.get("rsi_rebound_min", 40.0):
+                        continue
+                    if rsi_0 < p.get("rsi_rebound_confirm", 45.0):
+                        continue
             funnel["④ 均線斜率%"] += 1
 
             # ⑤ 量縮洗盤
@@ -606,6 +644,8 @@ def run_filter(
                 continue
             vs = v3 / v20
             if vs >= vol_limit:
+                continue
+            if p.get("require_volume_decreasing", False) and not is_volume_decreasing(v):
                 continue
             funnel["⑤ 量縮洗盤"] += 1
 
@@ -632,6 +672,13 @@ def run_filter(
             reversal_strict = (c0 > h1)
             passed_reversal = reversal_strict if strict else reversal_loose
             if stage == "entry" and not passed_reversal:
+                continue
+            body_ratio = bullish_body_ratio(df)
+            if (
+                stage == "entry"
+                and p.get("use_bullish_body", True)
+                and body_ratio < p.get("bullish_body_min_ratio", 0.30)
+            ):
                 continue
             if passed_reversal:
                 funnel["⑥ 止跌轉折"] += 1
@@ -671,6 +718,9 @@ def run_filter(
                 first = False  # 無法判斷時保守標為非首波
 
             # ── 停損：兩層合併（結構前低 + 均線），ATR緩衝 ──
+            if p.get("force_first_wave", False) and not first:
+                continue
+
             atr_buf_mult = p.get("atr_buf", 0.5)
             buf          = atr_0 * atr_buf_mult
 
@@ -1024,6 +1074,39 @@ def main():
         st.divider()
 
         st.markdown("**⑥ 損益比門檻 & 停損/目標**")
+        require_volume_decreasing = st.toggle("強化量縮：近3日量遞減", value=False,
+            help="近3日量需逐日下降，作為更嚴格的量縮確認。")
+        st.divider()
+
+        st.markdown("**新增勝率條件**")
+        use_bullish_body = st.toggle("轉折日需陽線實體", value=True,
+            help="進場觸發日需收盤大於開盤，避免十字星或猶豫K。")
+        bullish_body_min_ratio = st.slider("陽線實體 / 日振幅 >=", 0.10, 0.80, 0.30, 0.05,
+            help="0.30 代表陽線實體至少佔當日高低振幅 30%。")
+        force_first_wave = st.toggle("只做首波拉回", value=False,
+            help="啟用後，只保留首波拉回或仍在首波區附近的股票。")
+        use_rsi_filter = st.toggle("啟用 RSI 篩選", value=False,
+            help="RSI 用本地收盤價計算，不額外消耗 API。")
+        if use_rsi_filter:
+            rsi_min, rsi_max = st.slider("RSI(14) 區間", 10.0, 90.0, (35.0, 65.0), 1.0)
+            rsi_require_rebound = st.toggle("RSI 需曾超賣後轉強", value=False,
+                help="近幾日曾低於門檻，且今日重新站上確認值。")
+            if rsi_require_rebound:
+                rsi_rebound_lookback = st.slider("RSI 回看日數", 3, 10, 5, 1)
+                rsi_rebound_min = st.slider("回看期曾低於", 20.0, 50.0, 40.0, 1.0)
+                rsi_rebound_confirm = st.slider("今日 RSI 至少", 30.0, 60.0, 45.0, 1.0)
+            else:
+                rsi_rebound_lookback = 5
+                rsi_rebound_min = 40.0
+                rsi_rebound_confirm = 45.0
+        else:
+            rsi_min, rsi_max = 35.0, 65.0
+            rsi_require_rebound = False
+            rsi_rebound_lookback = 5
+            rsi_rebound_min = 40.0
+            rsi_rebound_confirm = 45.0
+        st.divider()
+
         min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5,
             help="損益比低於此值的股票不顯示。RR=1.5 代表潛在獲利是潛在虧損的1.5倍")
         atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 1.5, 0.8, 0.1,
@@ -1092,6 +1175,16 @@ def main():
                   vol_ratio=vol_ratio, min_rr=min_rr, atr_buf=atr_buf,
                   ma_slope_pct_min=ma_slope_pct_min,
                   today_vol_min=today_vol_min, today_vol_max=today_vol_max,
+                  use_bullish_body=use_bullish_body,
+                  bullish_body_min_ratio=bullish_body_min_ratio,
+                  force_first_wave=force_first_wave,
+                  use_rsi_filter=use_rsi_filter,
+                  rsi_min=rsi_min, rsi_max=rsi_max,
+                  rsi_require_rebound=rsi_require_rebound,
+                  rsi_rebound_lookback=rsi_rebound_lookback,
+                  rsi_rebound_min=rsi_rebound_min,
+                  rsi_rebound_confirm=rsi_rebound_confirm,
+                  require_volume_decreasing=require_volume_decreasing,
                   max_stop_pct=max_stop_pct / 100, swing_window=swing_window,
                   fib_t1=fib_t1, fib_t2=fib_t2,
                   touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
