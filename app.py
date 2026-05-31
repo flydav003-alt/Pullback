@@ -1,5 +1,5 @@
 # ==============================================================================
-# 台股波段拉回選股工具 v3.2
+# 台股波段拉回選股工具 v3.3
 # 修正：① 動能記憶改用 shift(1)，避免 High 自含偏差
 #       ② 新增 MA20 斜率篩選（條件④），確保均線仍向上
 #       ③ 停損改用近 10 日擺動低點 × 0.98（最多 10% 幅度）
@@ -8,12 +8,15 @@
 #       ⑥ K 線圖標示停損 / 目標水平線
 #       ⑦ 資料抓取改用執行緒池並行（~30 秒，原 2 分鐘）
 #       ⑧ 側邊欄按鈕全客製化 (注入 ✨ 展開 / ✖ 摺疊 中文字)
+#       ⑨ 三大法人篩選（TWSE T86 優先，失敗 fallback FinMind）
+#          外資＋投信合計淨買超連續天數（1/2/3天）；表格新增法人欄
 # ==============================================================================
 
 import re
 import io
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -21,6 +24,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import requests
 import yfinance as yf
 import streamlit as st
 
@@ -387,8 +391,162 @@ def cached_fetch(ids_tuple: tuple, start: str, end: str):
 
 
 # ==============================================================================
-# ── 4. 排程
+# ── 4. 三大法人資料抓取（TWSE 優先，失敗 fallback FinMind）
 # ==============================================================================
+TWSE_T86_URL = "https://www.twse.com.tw/rwd/zh/fund/T86"
+FINMIND_URL  = "https://api.finmindtrade.com/api/v4/data"
+
+
+def _twse_date_str(d: datetime) -> str:
+    return d.strftime("%Y%m%d")
+
+
+def _fetch_twse_t86(date: datetime) -> pd.DataFrame | None:
+    """抓取 TWSE T86 單日全市場三大法人，回傳 DataFrame(stock_id, foreign_net, trust_net) 或 None"""
+    try:
+        r = requests.get(
+            TWSE_T86_URL,
+            params={"date": _twse_date_str(date), "selectType": "ALL"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=12,
+        )
+        r.raise_for_status()
+        j = r.json()
+        if j.get("stat") != "OK" or not j.get("data"):
+            return None
+        rows = []
+        for row in j["data"]:
+            # 欄位順序：代號,名稱,外資買,外資賣,外資淨,投信買,投信賣,投信淨,自營...
+            sid = str(row[0]).strip()
+            if not re.match(r'^\d{4,5}$', sid):
+                continue
+            def _parse(v):
+                return int(str(v).replace(",", "").strip() or 0)
+            try:
+                foreign_net = _parse(row[4])   # 外資淨買超（張）
+                trust_net   = _parse(row[7])   # 投信淨買超（張）
+            except (IndexError, ValueError):
+                continue
+            rows.append({"stock_id": sid, "foreign_net": foreign_net, "trust_net": trust_net})
+        if not rows:
+            return None
+        return pd.DataFrame(rows).set_index("stock_id")
+    except Exception:
+        return None
+
+
+def _fetch_finmind_institutional(sid: str, start: str, end: str, token: str) -> pd.DataFrame | None:
+    """FinMind fallback：抓單支股票三大法人，回傳含 date/foreign_net/trust_net 的 DataFrame"""
+    try:
+        r = requests.get(FINMIND_URL, params={
+            "dataset":    "TaiwanStockInstitutionalInvestors",
+            "data_id":    sid,
+            "start_date": start,
+            "end_date":   end,
+            "token":      token,
+        }, timeout=15)
+        r.raise_for_status()
+        pl = r.json()
+        if pl.get("status") != 200 or not pl.get("data"):
+            return None
+        df = pd.DataFrame(pl["data"])
+        # FinMind 欄位：date, name, buy, sell
+        # name: 外資, 投信, 自營商
+        df["net"] = df["buy"].astype(int) - df["sell"].astype(int)
+        foreign = df[df["name"] == "外資"][["date", "net"]].rename(columns={"net": "foreign_net"})
+        trust   = df[df["name"] == "投信"][["date", "net"]].rename(columns={"net": "trust_net"})
+        merged  = foreign.merge(trust, on="date", how="outer").fillna(0)
+        merged["date"] = pd.to_datetime(merged["date"])
+        return merged.set_index("date")
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_institutional(ids: tuple, days: int, finmind_token: str | None) -> dict[str, list[int]]:
+    """
+    回傳 dict[stock_id -> list[int]]  (長度=days，每元素是當日外資+投信淨買超張數)
+    最新日在 index[-1]，最舊在 index[0]
+    策略：TWSE T86（整批抓，最多 days 次 request）→ 失敗才用 FinMind（每支一次）
+    """
+    n = datetime.now(tz=ZoneInfo("Asia/Taipei"))
+    # 往前找 days 個交易日（最多回推 30 天保險）
+    trading_dates: list[datetime] = []
+    d = n - timedelta(days=1)
+    while len(trading_dates) < days:
+        if d.weekday() < 5:   # 排除週六日（台股假日不做，簡化處理）
+            trading_dates.append(d)
+        d -= timedelta(days=1)
+        if (n - d).days > 30:
+            break
+    trading_dates = list(reversed(trading_dates))   # 舊→新
+
+    # ── 嘗試 TWSE T86 ──
+    twse_daily: list[pd.DataFrame | None] = []
+    twse_ok = True
+    for dt in trading_dates:
+        df_t = _fetch_twse_t86(dt)
+        twse_daily.append(df_t)
+        if df_t is None:
+            twse_ok = False
+
+    result: dict[str, list[int]] = {}
+
+    if twse_ok and any(df is not None for df in twse_daily):
+        # 用 TWSE 資料組出結果
+        for sid in ids:
+            daily_scores = []
+            for df_t in twse_daily:
+                if df_t is None or sid not in df_t.index:
+                    daily_scores.append(0)
+                else:
+                    row = df_t.loc[sid]
+                    daily_scores.append(int(row["foreign_net"]) + int(row["trust_net"]))
+            result[sid] = daily_scores
+        return result
+
+    # ── TWSE 失敗，fallback FinMind ──
+    if not finmind_token:
+        return {}
+    start_str = trading_dates[0].strftime("%Y-%m-%d")
+    end_str   = trading_dates[-1].strftime("%Y-%m-%d")
+
+    def _fm_one(sid):
+        df = _fetch_finmind_institutional(sid, start_str, end_str, finmind_token)
+        if df is None:
+            return sid, [0] * days
+        scores = []
+        for dt in trading_dates:
+            key = pd.Timestamp(dt.date())
+            if key in df.index:
+                row = df.loc[key]
+                scores.append(int(row.get("foreign_net", 0)) + int(row.get("trust_net", 0)))
+            else:
+                scores.append(0)
+        return sid, scores
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(_fm_one, sid): sid for sid in ids}
+        for f in as_completed(futures):
+            sid, scores = f.result()
+            result[sid] = scores
+    return result
+
+
+def calc_consecutive_buy(scores: list[int]) -> int:
+    """
+    輸入最近 N 天的淨買超張數（舊→新），
+    回傳從最新日往回數的『連續買超天數』(0~N)
+    """
+    count = 0
+    for v in reversed(scores):
+        if v > 0:
+            count += 1
+        else:
+            break
+    return count
+
+
 def tw_now() -> datetime:
     return datetime.now(tz=TZ_TW)
 
@@ -719,6 +877,15 @@ def run_filter(
                 continue
             funnel["⑦ 其他條件"] += 1
 
+            # ⑦+ 法人連續買超（非硬性；institutional_map 存在且啟用時才篩）
+            inst_map   = p.get("institutional_map", {})
+            inst_days  = p.get("institutional_days", 1)
+            inst_on    = p.get("institutional_on", False)
+            scores     = inst_map.get(sid, [])
+            consec     = calc_consecutive_buy(scores) if scores else 0
+            if inst_on and scores and consec < inst_days:
+                continue
+
             # ── 附加欄位 ──
             # 距高點天數：型態新鮮度指標
             try:
@@ -745,6 +912,7 @@ def run_filter(
                 "損益比(RR)":    rr,
                 "首波拉回":      "✅" if first else "—",
                 "RSI":           round(rsi(c, 14).iloc[-1], 1),
+                "法人":          consec,
                 "MA20":          round(ma20_0, 2),
                 "MA60":          round(ma60_0, 2),
                 "MA200":         round(ma200_0, 2),
@@ -1074,6 +1242,19 @@ def main():
             rsi_rebound_lookback = 5
             rsi_rebound_min = 40.0
             rsi_rebound_confirm = 45.0
+
+        # ── 法人篩選 ──
+        st.markdown("---")
+        st.caption("📊 三大法人篩選")
+        institutional_on = st.toggle("啟用法人篩選", value=False,
+            help="外資＋投信淨買超合計 > 0 算當日買超；連續 N 天才過。關閉時只顯示欄位，不影響篩選。")
+        if institutional_on:
+            institutional_days = st.slider("連續買超天數", 1, 3, 1, 1,
+                help="1=最近1天淨買超即過；2=連續2天；3=連續3天")
+            st.caption(f"📐 外資＋投信合計 > 0，需連續 {institutional_days} 天")
+        else:
+            institutional_days = 1
+            st.caption("⚪ 關閉中，法人欄仍顯示供參考")
         st.divider()
 
         min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5,
@@ -1156,14 +1337,32 @@ def main():
                   require_volume_decreasing=require_volume_decreasing,
                   max_stop_pct=max_stop_pct / 100, swing_window=swing_window,
                   fib_t1=fib_t1, fib_t2=fib_t2,
-                  touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
+                  touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol,
+                  institutional_on=institutional_on,
+                  institutional_days=institutional_days,
+                  institutional_map=st.session_state.get("institutional_map", {}))
 
     # Step A：有按「抓取」按鈕 → 用 yfinance 抓，存入 session_state
     if run_btn:
         pb = st.progress(0, text="⏳ 從 Yahoo Finance 批量抓取中（約 15~30 秒，之後調參數不需再抓）...")
         with st.spinner(""):
             data, ok, skip = do_fetch(user_ids)
-        pb.progress(100, text=f"✅ 載入 {ok} 檔完成！調整左側參數即可即時篩選。")
+        pb.progress(80, text=f"✅ 價量資料載入 {ok} 檔，正在抓取三大法人資料...")
+
+        # 抓法人（TWSE 優先，失敗 fallback FinMind）
+        try:
+            finmind_token = st.secrets.get("finmind", {}).get("token", None)
+        except Exception:
+            finmind_token = None
+        inst_map = fetch_institutional(tuple(user_ids), 3, finmind_token)
+        if inst_map:
+            st.session_state["institutional_map"] = inst_map
+            st.session_state["institutional_source"] = "TWSE/FinMind"
+        else:
+            st.session_state["institutional_map"] = {}
+            st.session_state["institutional_source"] = "無法取得"
+
+        pb.progress(100, text=f"✅ 載入 {ok} 檔完成！法人資料：{len(inst_map)} 檔。調整左側參數即可即時篩選。")
         has_data = True
         time.sleep(0.8)
         pb.empty()
@@ -1273,9 +1472,22 @@ def main():
             disp = [
                 "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
                 "量縮比","今日量/均量","均線斜率%","轉折確認","距高點天數",
-                "空間%","損益比(RR)","首波拉回","RSI","停損價","目標T1","目標T2",
+                "空間%","損益比(RR)","首波拉回","法人","RSI","停損價","目標T1","目標T2",
             ]
+            # 法人欄：依連續買超天數顯示顏色標籤
+            def _inst_label(v):
+                if v == 0:   return "+0"
+                if v == 1:   return "+1"
+                if v == 2:   return "+2"
+                return "+3"
+            if "法人" in result_df.columns:
+                result_df["法人_label"] = result_df["法人"].apply(_inst_label)
             slope_col_help  = "近10日 MA60 百分比變化；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 百分比變化；正=向上，負=下彎"
+
+            # 法人欄顏色（用 pandas Styler 無法直接在 st.dataframe 裡套用，改用數字欄＋顏色說明）
+            inst_source = st.session_state.get("institutional_source", "—")
+            st.caption(f"📊 法人資料來源：{inst_source}　｜　+1淺紅 +2中紅 +3深紅　｜　法人篩選：{'🟢 啟用' if institutional_on else '⚪ 關閉'}")
+
             st.dataframe(
                 result_df[disp],
                 use_container_width=True,
@@ -1297,7 +1509,7 @@ def main():
                                         help="今日成交量 ÷ 20日均量；進場觸發需落在設定區間"),
                     "均線斜率%":     st.column_config.NumberColumn("斜率%",  format="%.2f%%",
                                         help=slope_col_help),
-                    "轉折確認":      st.column_config.TextColumn("轉折", width=65,
+                    "轉折確認":      st.column_config.TextColumn("轉折", width=44,
                                         help="觀察=結構符合但尚未同時通過今日量能與止跌轉折；✅=已觸發"),
                     "距高點天數":    st.column_config.NumberColumn("高點",  format="%d天",
                                         help="距 M 日高點的天數；越小表示型態越新鮮"),
@@ -1308,8 +1520,15 @@ def main():
                                         help="第二段波段目標"),
                     "空間%":         st.column_config.NumberColumn("空間%", format="%.1f%%",
                                         help="以 T1 目標價計算的潛在上漲空間"),
-                    "損益比(RR)":    st.column_config.NumberColumn("RR",    format="%.2f", width=55),
-                    "首波拉回":      st.column_config.TextColumn("首波",    width="small"),
+                    "損益比(RR)":    st.column_config.NumberColumn("RR",    format="%.2f", width=44),
+                    "首波拉回":      st.column_config.TextColumn("首波",    width=40,
+                                        help="首波拉回機會，型態最佳"),
+                    "法人":          st.column_config.NumberColumn(
+                                        "法人",
+                                        format="%d",
+                                        width=48,
+                                        help="外資＋投信合計淨買超 > 0 的連續天數（0~3）。+1淺紅 +2中紅 +3深紅",
+                                    ),
                     "RSI":           st.column_config.NumberColumn("RSI", format="%.1f",
                                         help="RSI(14)；以本地收盤價計算"),
                 },
