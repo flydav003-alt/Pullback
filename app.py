@@ -503,6 +503,7 @@ def run_filter(
         "⑤ 量縮洗盤": 0,
         "⑤+ 轉強量能": 0,
         "⑥ 止跌轉折": 0,
+        "⑦ 其他條件": 0,
     }
     results = []
 
@@ -666,6 +667,8 @@ def run_filter(
             passed_reversal = reversal_strict if strict else reversal_loose
             if stage == "entry" and not passed_reversal:
                 continue
+            if passed_reversal:
+                funnel["⑥ 止跌轉折"] += 1
             body_ratio = bullish_body_ratio(df)
             if (
                 stage == "entry"
@@ -673,8 +676,6 @@ def run_filter(
                 and body_ratio < p.get("bullish_body_min_ratio", 0.30)
             ):
                 continue
-            if passed_reversal:
-                funnel["⑥ 止跌轉折"] += 1
 
             # 第一波拉回判斷（優化版）
             # 計算從高點後的拉回次數，只有一次（或仍在首次拉回附近）才標為首波
@@ -739,6 +740,7 @@ def run_filter(
             rr     = round(reward / risk, 2) if risk > 0 else 0.0
             if rr < p["min_rr"]:
                 continue
+            funnel["⑦ 其他條件"] += 1
 
             # ── 附加欄位 ──
             # 距高點天數：型態新鮮度指標
@@ -972,11 +974,6 @@ def main():
     with st.sidebar:
         st.markdown("### ⚙️ 策略參數")
 
-        strict_mode = st.toggle("嚴格模式", value=True,
-            help="開啟：今收 > 昨高（突破昨日高點，確定吃掉賣壓）。關閉：今收站回均線（今收 > MA20，且昨收還在 MA20 以下），量縮門檻放寬×1.3")
-        st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 多接受站回所選均線（MA20/MA60依你的買點模式）+ 量縮放寬")
-        st.divider()
-
         st.markdown("**① 長線多頭**")
         st.caption("MA50 > MA200 且 Close > MA200（固定）")
         st.divider()
@@ -1066,12 +1063,14 @@ def main():
             help="避免爆大量追高。2.0=今日量低於20日均量2倍")
         st.divider()
 
-        st.markdown("**⑥ 損益比門檻 & 停損/目標**")
-        require_volume_decreasing = st.toggle("強化量縮：近3日量遞減", value=False,
-            help="近3日量需逐日下降，作為更嚴格的量縮確認。")
+        strict_mode = st.toggle("⑥ 嚴格模式（止跌轉折）", value=True,
+            help="開啟：今收 > 昨高（突破昨日高點，確定吃掉賣壓）。關閉：今收 > 昨收（收紅即可，不要求突破昨高），量縮門檻放寬×1.3")
+        st.caption("🔒 嚴格 = 今收>昨高 + 量縮<Y\n🔓 寬鬆 = 今收>昨收（收紅）+ 量縮放寬")
         st.divider()
 
-        st.markdown("**新增勝率條件**")
+        st.markdown("**⑦ 其他條件**")
+        require_volume_decreasing = st.toggle("強化量縮：近3日量遞減", value=False,
+            help="近3日量需逐日下降，作為更嚴格的量縮確認。")
         use_bullish_body = st.toggle("轉折日需陽線實體", value=True,
             help="進場觸發日需收盤大於開盤，避免十字星或猶豫K。")
         bullish_body_min_ratio = st.slider("陽線實體 / 日振幅 >=", 0.10, 0.80, 0.30, 0.05,
