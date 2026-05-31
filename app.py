@@ -14,7 +14,6 @@ import re
 import io
 import time
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -22,7 +21,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import requests
+import yfinance as yf
 import streamlit as st
 
 warnings.filterwarnings("ignore")
@@ -334,79 +333,57 @@ STOCK_NAME_MAP = build_name_map(STOCK_STRING)
 KLINE_BASE_URL = "https://flydav003-alt.github.io/k-line/"
 
 # ==============================================================================
-# ── 3. FinMind API
+# ── 3. yfinance 資料抓取
 # ==============================================================================
-FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
-
-
-def get_token() -> str:
-    try:
-        t = st.secrets["finmind"]["token"]
-        if not t or t == "your_token_here":
-            st.error("⚠️ 請在 Streamlit Secrets 設定有效的 FinMind token！")
-            st.stop()
-        return t
-    except KeyError:
-        st.error("⚠️ 找不到 FinMind token，請至 Settings → Secrets 設定。")
-        st.stop()
-
-
-_RENAME = {
-    "date": "Date", "open": "Open",
-    "max": "High", "min": "Low",
-    "close": "Close",
-    "Trading_Volume": "Volume",
-    "trading_volume": "Volume",
-}
 _NEED = ["Open", "High", "Low", "Close", "Volume"]
 
 
-def _fetch_one(sid: str, start: str, end: str, token: str):
-    """單支股票抓取，供 ThreadPoolExecutor 並行呼叫"""
-    try:
-        r = requests.get(FINMIND_URL, params={
-            "dataset": "TaiwanStockPrice",
-            "data_id": sid,
-            "start_date": start,
-            "end_date": end,
-            "token": token,
-        }, timeout=15)
-        r.raise_for_status()
-        pl = r.json()
-        if pl.get("status") != 200 or not pl.get("data"):
-            return sid, None
-        df = pd.DataFrame(pl["data"]).rename(columns=_RENAME)
-        if not all(col in df.columns for col in ["Date"] + _NEED):
-            return sid, None
-        df["Date"] = pd.to_datetime(df["Date"])
-        df = df.set_index("Date").sort_index()
-        df = df[_NEED].apply(pd.to_numeric, errors="coerce").dropna(subset=["Close"])
-        if len(df) >= 100:
-            return sid, df
-        return sid, None
-    except Exception:
-        return sid, None
-
-
-def fetch_prices(ids: list[str], start: str, end: str, token: str) -> dict[str, pd.DataFrame]:
-    """
-    並行呼叫 FinMind TaiwanStockPrice，回傳 dict[stock_id -> OHLCV DataFrame]
-    ThreadPoolExecutor max_workers=5，避免 FinMind 限流；速度從 ~2 分鐘降至 ~30 秒
-    """
-    result: dict[str, pd.DataFrame] = {}
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        futures = {ex.submit(_fetch_one, sid, start, end, token): sid for sid in ids}
-        for f in as_completed(futures):
-            sid, df = f.result()
-            if df is not None:
-                result[sid] = df
-    return result
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_fetch(ids_tuple: tuple, start: str, end: str, token: str):
-    data = fetch_prices(list(ids_tuple), start, end, token)
-    return data, len(data), len(ids_tuple) - len(data)
+def cached_fetch(ids_tuple: tuple, start: str, end: str):
+    """
+    用 yfinance 批量下載台股 OHLCV
+    上市股票加 .TW，若失敗再試 .TWO（上櫃）
+    回傳 (data_dict, ok_cnt, skip_cnt)
+    """
+    tickers_tw  = [f"{sid}.TW"  for sid in ids_tuple]
+    tickers_two = [f"{sid}.TWO" for sid in ids_tuple]
+
+    # 第一批：.TW（上市）
+    raw_tw = yf.download(
+        tickers_tw, start=start, end=end,
+        auto_adjust=True, progress=False, threads=True,
+    )
+    # 第二批：.TWO（上櫃）
+    raw_two = yf.download(
+        tickers_two, start=start, end=end,
+        auto_adjust=True, progress=False, threads=True,
+    )
+
+    data: dict[str, pd.DataFrame] = {}
+
+    for sid in ids_tuple:
+        df = None
+        for raw, suffix in [(raw_tw, ".TW"), (raw_two, ".TWO")]:
+            ticker = f"{sid}{suffix}"
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    # 多支股票時是 MultiIndex (field, ticker)
+                    sub = raw.xs(ticker, axis=1, level=1)[_NEED]
+                else:
+                    # 只有一支股票時是單層
+                    sub = raw[_NEED]
+                sub = sub.dropna(subset=["Close"])
+                if len(sub) >= 100:
+                    df = sub
+                    break
+            except Exception:
+                continue
+        if df is not None:
+            data[sid] = df
+
+    ok   = len(data)
+    skip = len(ids_tuple) - ok
+    return data, ok, skip
 
 
 # ==============================================================================
@@ -905,11 +882,11 @@ def kline(df: pd.DataFrame, sid: str,
 # ==============================================================================
 # ── 8. 資料抓取包裝
 # ==============================================================================
-def do_fetch(ids: list[str], token: str):
-    n    = tw_now()
-    end  = n.strftime("%Y-%m-%d")
+def do_fetch(ids: list[str]):
+    n     = tw_now()
+    end   = n.strftime("%Y-%m-%d")
     start = (n - timedelta(days=430)).strftime("%Y-%m-%d")
-    data, ok, skip = cached_fetch(tuple(ids), start, end, token)
+    data, ok, skip = cached_fetch(tuple(ids), start, end)
     st.session_state.update({
         "data_dict":       data,
         "success_cnt":     ok,
@@ -924,13 +901,12 @@ def do_fetch(ids: list[str], token: str):
 # ── 9. 主程式
 # ==============================================================================
 def main():
-    token    = get_token()
     has_data = bool(st.session_state.get("data_dict"))
 
     # ── 自動排程 ──
     if should_auto_fetch():
         with st.spinner("⏰ 18:00 自動抓取中..."):
-            do_fetch(DEFAULT_STOCK_IDS, token)
+            do_fetch(DEFAULT_STOCK_IDS)
         st.toast("✅ 排程自動抓取完成！", icon="🕕")
         has_data = True
 
@@ -941,7 +917,7 @@ def main():
     <div class="hero-header">
         <p class="hero-title">📡 台股波段拉回選股系統</p>
         <p class="hero-subtitle">
-            半導體 · AI · 衛星通訊供應鏈 ｜ FinMind 台股資料
+            半導體 · AI · 衛星通訊供應鏈 ｜ yfinance 台股資料
             ｜ 每日 18:00 自動更新
         </p>
     </div>""", unsafe_allow_html=True)
@@ -1127,7 +1103,7 @@ def main():
         st.caption(f"已設定 **{len(user_ids)}** 檔股票")
         st.divider()
 
-        # ── 抓取按鈕（唯一會打 FinMind 的地方）──
+        # ── 抓取按鈕 ──
         run_btn = st.button("🚀 抓取最新資料", type="primary", use_container_width=True,
                             help="點一次即可，資料會記憶在本頁。調整參數不需再按此按鈕。")
 
@@ -1136,29 +1112,29 @@ def main():
             fetch_time = st.session_state.get("last_fetch_time", "")
             fetch_cnt  = st.session_state.get("success_cnt", 0)
             st.success(f"✅ 資料已載入 {fetch_cnt} 檔\n{fetch_time}")
-            st.caption("⬆️ 調整上方參數即可即時重新篩選，不消耗 API")
+            st.caption("⬆️ 調整上方參數即可即時重新篩選")
         else:
             st.warning("尚無資料，請先按上方按鈕抓取")
 
         st.divider()
-        st.markdown("### ℹ️ FinMind")
-        st.caption("Token 存於 Streamlit Secrets")
+        st.markdown("### ℹ️ 資料來源")
+        st.caption("yfinance（Yahoo Finance）｜免費、無需 Token")
         used = len(user_ids)
-        st.progress(min(used/600, 1.0), text=f"每次抓取消耗 {used}/600 calls")
+        st.caption(f"股票池：{used} 檔")
 
     # ════════════════════════════════════════════════
     # 主頁面邏輯
     # 核心架構：「抓資料」與「篩選」完全分離
     #
     #  ┌─ run_btn 按下 ─────────────────────────────┐
-    #  │  呼叫 FinMind API（唯一消耗 token 的地方）  │
+    #  │  呼叫 yfinance（唯一消耗網路的地方）        │
     #  │  結果存入 st.session_state["data_dict"]     │
     #  └────────────────────────────────────────────┘
     #           ↓ 資料存活於整個 session
     #  ┌─ 每次頁面 rerun（含滑動 Slider）───────────┐
     #  │  直接從 session_state 取資料               │
     #  │  重跑 run_filter()（純本地運算，<1秒）      │
-    #  │  完全不碰 FinMind                          │
+    #  │  完全不碰 yfinance                         │
     #  └────────────────────────────────────────────┘
     # ════════════════════════════════════════════════
     params = dict(momentum_days=momentum_days, high_window=high_window,
@@ -1182,11 +1158,11 @@ def main():
                   fib_t1=fib_t1, fib_t2=fib_t2,
                   touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol)
 
-    # Step A：有按「抓取」按鈕 → 打 FinMind，存入 session_state
+    # Step A：有按「抓取」按鈕 → 用 yfinance 抓，存入 session_state
     if run_btn:
-        pb = st.progress(0, text="⏳ 從 FinMind 並行抓取中（5 執行緒，約 30 秒，之後調參數不需再抓）...")
+        pb = st.progress(0, text="⏳ 從 Yahoo Finance 批量抓取中（約 15~30 秒，之後調參數不需再抓）...")
         with st.spinner(""):
-            data, ok, skip = do_fetch(user_ids, token)
+            data, ok, skip = do_fetch(user_ids)
         pb.progress(100, text=f"✅ 載入 {ok} 檔完成！調整左側參數即可即時篩選。")
         has_data = True
         time.sleep(0.8)
@@ -1389,7 +1365,7 @@ def main():
     else:
         # 尚無資料
         st.info("👈 點擊左側「🚀 抓取最新資料」開始，或等待每日 18:00 自動抓取。\n\n"
-                "**資料載入一次後，調整任何篩選參數都不會再消耗 FinMind API。**")
+                "**資料載入一次後，調整任何篩選參數都不會再重新下載。**")
         c1, c2 = st.columns(2)
         with c1:
             st.markdown(f"| 參數 | 值 |\n|---|---|\n"
