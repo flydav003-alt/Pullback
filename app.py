@@ -767,6 +767,7 @@ def run_filter(
                 "空間%":         round((target_t1 - c0) / c0 * 100, 1) if c0 > 0 else 0,
                 "損益比(RR)":    rr,
                 "首波拉回":      "✅" if first else "—",
+                "RSI":           round(rsi(c, 14).iloc[-1], 1),
                 "MA20":          round(ma20_0, 2),
                 "MA60":          round(ma60_0, 2),
                 "MA200":         round(ma200_0, 2),
@@ -1296,7 +1297,7 @@ def main():
             disp = [
                 "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
                 "量縮比","今日量/均量","均線斜率%","轉折確認","距高點天數",
-                "空間%","損益比(RR)","首波拉回","停損價","目標T1","目標T2",
+                "空間%","損益比(RR)","首波拉回","RSI","停損價","目標T1","目標T2",
             ]
             slope_col_help  = "近10日 MA60 百分比變化；正=向上，負=下彎" if params.get("pullback_mode") == "回踩MA60" else "近5日 MA20 百分比變化；正=向上，負=下彎"
             st.dataframe(
@@ -1333,6 +1334,8 @@ def main():
                                         help="以 T1 目標價計算的潛在上漲空間"),
                     "損益比(RR)":    st.column_config.NumberColumn("RR",    format="%.2f", width=55),
                     "首波拉回":      st.column_config.TextColumn("首波",    width="small"),
+                    "RSI":           st.column_config.NumberColumn("RSI", format="%.1f",
+                                        help="RSI(14)；以本地收盤價計算"),
                 },
                 hide_index=True,
             )
