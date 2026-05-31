@@ -503,6 +503,7 @@ def fetch_institutional(ids: tuple, days: int, finmind_token: str | None) -> dic
                     row = df_t.loc[sid]
                     daily_scores.append(int(row["foreign_net"]) + int(row["trust_net"]))
             result[sid] = daily_scores
+        result["__source__"] = ["TWSE"]   # 來源標記
         return result
 
     # ── TWSE 失敗，fallback FinMind ──
@@ -530,6 +531,7 @@ def fetch_institutional(ids: tuple, days: int, finmind_token: str | None) -> dic
         for f in as_completed(futures):
             sid, scores = f.result()
             result[sid] = scores
+    result["__source__"] = ["FinMind"]   # 來源標記
     return result
 
 
@@ -1355,9 +1357,11 @@ def main():
         except Exception:
             finmind_token = None
         inst_map = fetch_institutional(tuple(user_ids), 3, finmind_token)
+        actual_source = "無法取得"
         if inst_map:
+            actual_source = inst_map.pop("__source__", ["—"])[0]
             st.session_state["institutional_map"] = inst_map
-            st.session_state["institutional_source"] = "TWSE/FinMind"
+            st.session_state["institutional_source"] = actual_source
         else:
             st.session_state["institutional_map"] = {}
             st.session_state["institutional_source"] = "無法取得"
@@ -1486,7 +1490,15 @@ def main():
 
             # 法人欄顏色（用 pandas Styler 無法直接在 st.dataframe 裡套用，改用數字欄＋顏色說明）
             inst_source = st.session_state.get("institutional_source", "—")
-            st.caption(f"📊 法人資料來源：{inst_source}　｜　+1淺紅 +2中紅 +3深紅　｜　法人篩選：{'🟢 啟用' if institutional_on else '⚪ 關閉'}")
+            if inst_source == "TWSE":
+                source_badge = "🟢 TWSE（台灣交易所）"
+            elif inst_source == "FinMind":
+                source_badge = "🟡 FinMind（TWSE 失敗後備援）"
+            elif inst_source == "無法取得":
+                source_badge = "🔴 無法取得（法人欄顯示 0）"
+            else:
+                source_badge = "— 尚未抓取（請按抓取按鈕）"
+            st.caption(f"📊 法人資料來源：{source_badge}　｜　+1淺紅 +2中紅 +3深紅　｜　法人篩選：{'🟢 啟用' if institutional_on else '⚪ 關閉'}")
 
             st.dataframe(
                 result_df[disp],
