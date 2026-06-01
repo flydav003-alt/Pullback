@@ -780,6 +780,27 @@ def run_filter(
             slope_val = (slope_curr / slope_base - 1) * 100
             if slope_val < p.get("ma_slope_pct_min", 0.0):
                 continue
+
+            # ── [新增] ④+ 斜率加速度過濾：防止均線即將下彎 ──────────────────
+            # 比較「最近一段斜率」vs「前一段斜率」，若急速惡化代表多頭力道衰竭
+            if p.get("use_slope_accel", False):
+                try:
+                    if pullback_mode == "回踩MA60":
+                        if len(ma60_s) >= 21:
+                            slope_now  = (ma60_0           / ma60_s.iloc[-11] - 1) * 100
+                            slope_prev = (ma60_s.iloc[-11]  / ma60_s.iloc[-21] - 1) * 100
+                            if (slope_now - slope_prev) < p.get("slope_accel_min", -0.10):
+                                continue
+                    else:
+                        if len(ma20_s) >= 7:
+                            slope_now  = (ma20_0           / ma20_s.iloc[-4] - 1) * 100
+                            slope_prev = (ma20_s.iloc[-4]  / ma20_s.iloc[-7] - 1) * 100
+                            if (slope_now - slope_prev) < p.get("slope_accel_min", -0.10):
+                                continue
+                except Exception:
+                    pass
+            # ── [新增結束] ────────────────────────────────────────────────────
+
             if p.get("use_rsi_filter", False):
                 rsi_s = rsi(c, 14)
                 rsi_0 = rsi_s.iloc[-1]
@@ -805,6 +826,22 @@ def run_filter(
             if p.get("require_volume_decreasing", False) and not is_volume_decreasing(v):
                 continue
             funnel["⑤ 量縮洗盤"] += 1
+
+            # ── [新增] ⑤+ 跌破日爆量排除：防止主力出貨型假回踩 ─────────────
+            # 找近 touch_window 天內最低那日，若當日爆量視為出貨直接排除
+            if p.get("use_breakdown_vol", False):
+                try:
+                    tw = p.get("touch_window", 10)
+                    recent_lows = l.iloc[-tw:]
+                    if len(recent_lows) > 0:
+                        touch_day_idx = recent_lows.idxmin()
+                        touch_day_pos = df.index.get_loc(touch_day_idx)
+                        touch_day_vol = v.iloc[touch_day_pos]
+                        if v20 > 0 and (touch_day_vol / v20) > p.get("breakdown_vol_max", 1.5):
+                            continue
+                except Exception:
+                    pass
+            # ── [新增結束] ────────────────────────────────────────────────────
 
             # ⑤+ 今日轉強量能：拉回時量縮，但觸發日不能完全沒量，也避免爆量追高。
             v0_val = v.iloc[-1]
@@ -1242,12 +1279,32 @@ def main():
         st.markdown("**⑦ 其他條件**")
         require_volume_decreasing = st.toggle("強化量縮：近3日量遞減", value=False,
             help="近3日量需逐日下降，作為更嚴格的量縮確認。")
-        use_bullish_body = st.toggle("轉折日需陽線實體", value=True,
+        use_bullish_body = st.toggle("轉折日需陽線實體", value=False,
             help="進場觸發日需收盤大於開盤，避免十字星或猶豫K。")
         bullish_body_min_ratio = st.slider("陽線實體 / 日振幅 >=", 0.10, 0.80, 0.30, 0.05,
-            help="0.30 代表陽線實體至少佔當日高低振幅 30%。")
+            help="0.30 代表陽線實體至少佔當日高低振幅 30%。") if use_bullish_body else 0.30
         force_first_wave = st.toggle("只做首波拉回", value=False,
             help="啟用後，只保留首波拉回或仍在首波區附近的股票。")
+
+        # ── [新增] 斜率加速度過濾 ──
+        use_slope_accel = st.toggle("均線斜率加速度過濾", value=False,
+            help="防止均線即將下彎。比較最近一段斜率 vs 前一段，若急速惡化代表多頭力道衰竭直接排除。\n回測驗證有效後再開啟。")
+        if use_slope_accel:
+            slope_accel_min = st.slider("斜率加速度下限", -0.50, 0.00, -0.10, 0.01,
+                help="數字越接近 0 → 過濾越嚴，訊號越少（例如 -0.05）\n數字越負 → 過濾越寬（例如 -0.30）\n建議先用 -0.10 觀察訊號數再調整")
+            st.caption(f"📐 斜率加速度 < {slope_accel_min:.2f} 則排除")
+        else:
+            slope_accel_min = -999.0
+
+        # ── [新增] 跌破日爆量排除 ──
+        use_breakdown_vol = st.toggle("跌破日爆量排除", value=False,
+            help="回踩最低點那天若爆量（疑似主力出貨），直接排除。防止假回踩崩跌。\n回測驗證有效後再開啟。")
+        if use_breakdown_vol:
+            breakdown_vol_max = st.slider("跌破日量 / 均量 上限", 1.0, 3.0, 1.5, 0.1,
+                help="數字越小 → 過濾越嚴（例如 1.2）\n數字越大 → 只排除誇張爆量（例如 2.0）\n建議先用 1.5 觀察訊號數再調整")
+            st.caption(f"📐 跌破日量 > 均量 × {breakdown_vol_max:.1f} 倍則排除")
+        else:
+            breakdown_vol_max = 999.0
         use_rsi_filter = st.toggle("啟用 RSI 篩選", value=False,
             help="RSI 用本地收盤價計算，不額外消耗 API。")
         if use_rsi_filter:
@@ -1364,6 +1421,8 @@ def main():
                   max_stop_pct=max_stop_pct / 100, swing_window=swing_window,
                   fib_t1=fib_t1, fib_t2=fib_t2,
                   touch_enabled=touch_enabled, touch_window=touch_window, touch_tol=touch_tol,
+                  use_slope_accel=use_slope_accel, slope_accel_min=slope_accel_min,
+                  use_breakdown_vol=use_breakdown_vol, breakdown_vol_max=breakdown_vol_max,
                   institutional_on=institutional_on,
                   institutional_days=institutional_days,
                   institutional_map=st.session_state.get("institutional_map", {}))
