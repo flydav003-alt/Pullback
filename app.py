@@ -25,7 +25,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
-import yfinance as yf
 import streamlit as st
 
 warnings.filterwarnings("ignore")
@@ -337,58 +336,65 @@ STOCK_NAME_MAP = build_name_map(STOCK_STRING)
 KLINE_BASE_URL = "https://flydav003-alt.github.io/k-line/"
 
 # ==============================================================================
-# ── 3. FinMind OHLCV 資料抓取
+# ── 3. FinMind 資料抓取（取代 yfinance，確保最新當日價格）
 # ==============================================================================
+FINMIND_PRICE_URL = "https://api.finmindtrade.com/api/v4/data"
 _NEED = ["Open", "High", "Low", "Close", "Volume"]
-FINMIND_OHLCV_URL = "https://api.finmindtrade.com/api/v4/data"
 
 
-def _fetch_one_finmind(sid: str, start: str, end: str, token: str) -> tuple[str, pd.DataFrame | None]:
-    """抓單支股票 OHLCV，回傳 (sid, DataFrame 或 None)"""
+def _fetch_finmind_price_one(sid: str, start: str, end: str, token: str) -> pd.DataFrame | None:
+    """
+    用 FinMind TaiwanStockPrice 抓單支股票 OHLCV
+    回傳符合格式的 DataFrame（index=DatetimeIndex, columns=Open/High/Low/Close/Volume）
+    或 None（失敗 / 資料不足）
+    """
     try:
-        r = requests.get(FINMIND_OHLCV_URL, params={
+        params = {
             "dataset":    "TaiwanStockPrice",
             "data_id":    sid,
             "start_date": start,
             "end_date":   end,
             "token":      token,
-        }, timeout=20)
+        }
+        r = requests.get(FINMIND_PRICE_URL, params=params, timeout=20)
         r.raise_for_status()
         pl = r.json()
         if pl.get("status") != 200 or not pl.get("data"):
-            return sid, None
+            return None
         df = pd.DataFrame(pl["data"])
-        # FinMind 欄位：date, open, max, min, close, Trading_Volume
+        # FinMind 欄位：date, open, max, min, close, Trading_Volume, ...
         df = df.rename(columns={
-            "date":           "Date",
-            "open":           "Open",
-            "max":            "High",
-            "min":            "Low",
-            "close":          "Close",
-            "Trading_Volume": "Volume",
+            "date":             "Date",
+            "open":             "Open",
+            "max":              "High",
+            "min":              "Low",
+            "close":            "Close",
+            "Trading_Volume":   "Volume",
         })
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.set_index("Date").sort_index()
         df = df[_NEED].apply(pd.to_numeric, errors="coerce")
         df = df.dropna(subset=["Close"])
         if len(df) < 100:
-            return sid, None
-        return sid, df
+            return None
+        return df
     except Exception:
-        return sid, None
+        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_fetch(ids_tuple: tuple, start: str, end: str, today: str, token: str):
+def cached_fetch(ids_tuple: tuple, start: str, end: str, token: str):
     """
-    用 FinMind 並行下載台股 OHLCV（上市+上櫃皆可，不需區分 .TW/.TWO）
-    today 參數作為 cache key 一部分，確保每日一定重抓
+    用 FinMind 並行抓取台股 OHLCV（確保拿到當日最新收盤）
     回傳 (data_dict, ok_cnt, skip_cnt)
     """
     data: dict[str, pd.DataFrame] = {}
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(_fetch_one_finmind, sid, start, end, token): sid for sid in ids_tuple}
+    def _fetch_one(sid):
+        return sid, _fetch_finmind_price_one(sid, start, end, token)
+
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(_fetch_one, sid): sid for sid in ids_tuple}
         for f in as_completed(futures):
             sid, df = f.result()
             if df is not None:
@@ -1069,7 +1075,12 @@ def do_fetch(ids: list[str]):
     n     = tw_now()
     end   = n.strftime("%Y-%m-%d")
     start = (n - timedelta(days=430)).strftime("%Y-%m-%d")
-    data, ok, skip = cached_fetch(tuple(ids), start, end, n.strftime("%Y-%m-%d"))
+    # 取 FinMind token（價格抓取也用同一個 token）
+    try:
+        finmind_token = st.secrets.get("finmind", {}).get("token", "") or ""
+    except Exception:
+        finmind_token = ""
+    data, ok, skip = cached_fetch(tuple(ids), start, end, finmind_token)
     st.session_state.update({
         "data_dict":       data,
         "success_cnt":     ok,
@@ -1100,7 +1111,7 @@ def main():
     <div class="hero-header">
         <p class="hero-title">📡 台股波段拉回選股系統</p>
         <p class="hero-subtitle">
-            半導體 · AI · 衛星通訊供應鏈 ｜ yfinance 台股資料
+            半導體 · AI · 衛星通訊供應鏈 ｜ FinMind 台股資料
             ｜ 每日 18:00 自動更新
         </p>
     </div>""", unsafe_allow_html=True)
@@ -1314,7 +1325,7 @@ def main():
 
         st.divider()
         st.markdown("### ℹ️ 資料來源")
-        st.caption("yfinance（Yahoo Finance）｜免費、無需 Token")
+        st.caption("FinMind API ｜ 需 Token（已設定於 Secrets）")
         used = len(user_ids)
         st.caption(f"股票池：{used} 檔")
 
@@ -1323,14 +1334,14 @@ def main():
     # 核心架構：「抓資料」與「篩選」完全分離
     #
     #  ┌─ run_btn 按下 ─────────────────────────────┐
-    #  │  呼叫 yfinance（唯一消耗網路的地方）        │
+    #  │  呼叫 FinMind API（唯一消耗網路的地方）     │
     #  │  結果存入 st.session_state["data_dict"]     │
     #  └────────────────────────────────────────────┘
     #           ↓ 資料存活於整個 session
     #  ┌─ 每次頁面 rerun（含滑動 Slider）───────────┐
     #  │  直接從 session_state 取資料               │
     #  │  重跑 run_filter()（純本地運算，<1秒）      │
-    #  │  完全不碰 yfinance                         │
+    #  │  完全不碰 FinMind                          │
     #  └────────────────────────────────────────────┘
     # ════════════════════════════════════════════════
     params = dict(momentum_days=momentum_days, high_window=high_window,
@@ -1357,9 +1368,9 @@ def main():
                   institutional_days=institutional_days,
                   institutional_map=st.session_state.get("institutional_map", {}))
 
-    # Step A：有按「抓取」按鈕 → 用 yfinance 抓，存入 session_state
+    # Step A：有按「抓取」按鈕 → 用 FinMind 抓，存入 session_state
     if run_btn:
-        pb = st.progress(0, text="⏳ 從 Yahoo Finance 批量抓取中（約 15~30 秒，之後調參數不需再抓）...")
+        pb = st.progress(0, text="⏳ 從 FinMind 並行抓取中（約 15~40 秒，之後調參數不需再抓）...")
         with st.spinner(""):
             data, ok, skip = do_fetch(user_ids)
         pb.progress(80, text=f"✅ 價量資料載入 {ok} 檔，正在抓取三大法人資料...")
