@@ -337,53 +337,62 @@ STOCK_NAME_MAP = build_name_map(STOCK_STRING)
 KLINE_BASE_URL = "https://flydav003-alt.github.io/k-line/"
 
 # ==============================================================================
-# ── 3. yfinance 資料抓取
+# ── 3. FinMind OHLCV 資料抓取
 # ==============================================================================
 _NEED = ["Open", "High", "Low", "Close", "Volume"]
+FINMIND_OHLCV_URL = "https://api.finmindtrade.com/api/v4/data"
+
+
+def _fetch_one_finmind(sid: str, start: str, end: str, token: str) -> tuple[str, pd.DataFrame | None]:
+    """抓單支股票 OHLCV，回傳 (sid, DataFrame 或 None)"""
+    try:
+        r = requests.get(FINMIND_OHLCV_URL, params={
+            "dataset":    "TaiwanStockPrice",
+            "data_id":    sid,
+            "start_date": start,
+            "end_date":   end,
+            "token":      token,
+        }, timeout=20)
+        r.raise_for_status()
+        pl = r.json()
+        if pl.get("status") != 200 or not pl.get("data"):
+            return sid, None
+        df = pd.DataFrame(pl["data"])
+        # FinMind 欄位：date, open, max, min, close, Trading_Volume
+        df = df.rename(columns={
+            "date":           "Date",
+            "open":           "Open",
+            "max":            "High",
+            "min":            "Low",
+            "close":          "Close",
+            "Trading_Volume": "Volume",
+        })
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.set_index("Date").sort_index()
+        df = df[_NEED].apply(pd.to_numeric, errors="coerce")
+        df = df.dropna(subset=["Close"])
+        if len(df) < 100:
+            return sid, None
+        return sid, df
+    except Exception:
+        return sid, None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_fetch(ids_tuple: tuple, start: str, end: str, today: str):
+def cached_fetch(ids_tuple: tuple, start: str, end: str, today: str, token: str):
     """
-    用 yfinance 批量下載台股 OHLCV
-    上市股票加 .TW，若失敗再試 .TWO（上櫃）
+    用 FinMind 並行下載台股 OHLCV（上市+上櫃皆可，不需區分 .TW/.TWO）
+    today 參數作為 cache key 一部分，確保每日一定重抓
     回傳 (data_dict, ok_cnt, skip_cnt)
     """
-    tickers_tw  = [f"{sid}.TW"  for sid in ids_tuple]
-    tickers_two = [f"{sid}.TWO" for sid in ids_tuple]
-
-    # 第一批：.TW（上市）
-    raw_tw = yf.download(
-        tickers_tw, start=start, end=end,
-        auto_adjust=True, progress=False, threads=True,
-    )
-    # 第二批：.TWO（上櫃）
-    raw_two = yf.download(
-        tickers_two, start=start, end=end,
-        auto_adjust=True, progress=False, threads=True,
-    )
-
     data: dict[str, pd.DataFrame] = {}
 
-    for sid in ids_tuple:
-        df = None
-        for raw, suffix in [(raw_tw, ".TW"), (raw_two, ".TWO")]:
-            ticker = f"{sid}{suffix}"
-            try:
-                if isinstance(raw.columns, pd.MultiIndex):
-                    # 多支股票時是 MultiIndex (field, ticker)
-                    sub = raw.xs(ticker, axis=1, level=1)[_NEED]
-                else:
-                    # 只有一支股票時是單層
-                    sub = raw[_NEED]
-                sub = sub.dropna(subset=["Close"])
-                if len(sub) >= 100:
-                    df = sub
-                    break
-            except Exception:
-                continue
-        if df is not None:
-            data[sid] = df
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(_fetch_one_finmind, sid, start, end, token): sid for sid in ids_tuple}
+        for f in as_completed(futures):
+            sid, df = f.result()
+            if df is not None:
+                data[sid] = df
 
     ok   = len(data)
     skip = len(ids_tuple) - ok
