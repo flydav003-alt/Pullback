@@ -343,7 +343,7 @@ _NEED = ["Open", "High", "Low", "Close", "Volume"]
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_fetch(ids_tuple: tuple, start: str, end: str):
+def cached_fetch(ids_tuple: tuple, start: str, end: str, today: str):
     """
     用 yfinance 批量下載台股 OHLCV
     上市股票加 .TW，若失敗再試 .TWO（上櫃）
@@ -1060,7 +1060,7 @@ def do_fetch(ids: list[str]):
     n     = tw_now()
     end   = n.strftime("%Y-%m-%d")
     start = (n - timedelta(days=430)).strftime("%Y-%m-%d")
-    data, ok, skip = cached_fetch(tuple(ids), start, end)
+    data, ok, skip = cached_fetch(tuple(ids), start, end, n.strftime("%Y-%m-%d"))
     st.session_state.update({
         "data_dict":       data,
         "success_cnt":     ok,
