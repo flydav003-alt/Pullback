@@ -755,10 +755,14 @@ def run_filter(
             # ④ 均線斜率（正規化百分比；MA60模式看10日，其餘看MA20近5日）
             if pullback_mode == "回踩MA60":
                 slope_base = ma60_s.iloc[-11] if len(ma60_s) >= 11 else np.nan
-                slope_val = (ma60_0 / slope_base - 1) * 100 if slope_base and not pd.isna(slope_base) else 0.0
+                slope_curr = ma60_0
             else:
                 slope_base = ma20_s.iloc[-6] if len(ma20_s) >= 6 else np.nan
-                slope_val = (ma20_0 / slope_base - 1) * 100 if slope_base and not pd.isna(slope_base) else 0.0
+                slope_curr = ma20_0
+            # 修正：slope_base 為 NaN 或 0 時直接跳過，不用 0.0 fallback 遮蔽真實斜率
+            if pd.isna(slope_base) or slope_base == 0 or pd.isna(slope_curr):
+                continue
+            slope_val = (slope_curr / slope_base - 1) * 100
             if slope_val < p.get("ma_slope_pct_min", 0.0):
                 continue
             if p.get("use_rsi_filter", False):
