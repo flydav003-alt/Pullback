@@ -483,31 +483,39 @@ def fetch_institutional(ids: tuple, days: int, finmind_token: str | None) -> dic
     回傳 dict[stock_id -> list[int]]  (長度=days，每元素是當日外資+投信淨買超張數)
     最新日在 index[-1]，最舊在 index[0]
     策略：TWSE T86（整批抓，最多 days 次 request）→ 失敗才用 FinMind（每支一次）
+
+    修正 Bug 1：18:00 後當天法人資料已公布，起始日改為今天（非昨天）
+    修正 Bug 2：twse_ok 改為「至少一天成功」就用 TWSE，
+                而非「全部成功」才用（避免因假日 None 整批 fallback）
     """
     n = datetime.now(tz=ZoneInfo("Asia/Taipei"))
-    # 往前找 days 個交易日（最多回推 30 天保險）
+
+    # ── Bug 1 修正：18:00 後當天資料已公布，從今天起算；否則從昨天起算 ──
+    start_d = n if n.hour >= 18 else n - timedelta(days=1)
+
+    # 往前找 days 個交易日（最多回推 30 天保險，涵蓋長假）
     trading_dates: list[datetime] = []
-    d = n - timedelta(days=1)
+    d = start_d
     while len(trading_dates) < days:
         if d.weekday() < 5:   # 排除週六日（台股假日不做，簡化處理）
             trading_dates.append(d)
         d -= timedelta(days=1)
-        if (n - d).days > 30:
+        if (start_d - d).days > 30:
             break
     trading_dates = list(reversed(trading_dates))   # 舊→新
 
     # ── 嘗試 TWSE T86 ──
     twse_daily: list[pd.DataFrame | None] = []
-    twse_ok = True
     for dt in trading_dates:
         df_t = _fetch_twse_t86(dt)
         twse_daily.append(df_t)
-        if df_t is None:
-            twse_ok = False
+
+    # ── Bug 2 修正：只要有任何一天成功就用 TWSE，不因假日 None 整批放棄 ──
+    twse_ok = any(df is not None for df in twse_daily)
 
     result: dict[str, list[int]] = {}
 
-    if twse_ok and any(df is not None for df in twse_daily):
+    if twse_ok:
         # 用 TWSE 資料組出結果
         for sid in ids:
             daily_scores = []
