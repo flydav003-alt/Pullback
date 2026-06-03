@@ -658,8 +658,8 @@ def run_filter(
         "① 長線多頭": 0,
         "② 動能記憶": 0,
         "③ 波段拉回": 0,
-        "③+ 回踩確認": 0,
         "④ 均線斜率%": 0,
+        "④+ 回踩確認": 0,
         "⑤ 量縮洗盤": 0,
         "⑤+ 轉強量能": 0,
         "⑥ 止跌轉折": 0,
@@ -757,12 +757,47 @@ def run_filter(
 
             funnel["③ 波段拉回"] += 1
 
-            # ③+ 回踩確認（可選）
+            # ④ 均線斜率（先判斜率，再做回踩確認；使用 UI 傳入的獨立窗口參數）
+            if pullback_mode == "回踩MA60":
+                sw = int(p.get("slope_window_ma60", 10))
+                slope_base = ma60_s.iloc[-(sw + 1)] if len(ma60_s) >= (sw + 1) else np.nan
+                slope_curr = ma60_0
+            else:
+                sw = int(p.get("slope_window_ma20", 5))
+                slope_base = ma20_s.iloc[-(sw + 1)] if len(ma20_s) >= (sw + 1) else np.nan
+                slope_curr = ma20_0
+            if pd.isna(slope_base) or slope_base == 0 or pd.isna(slope_curr):
+                continue
+            slope_val = (slope_curr / slope_base - 1) * 100
+            if slope_val < p.get("ma_slope_pct_min", 0.0):
+                continue
+
+            # ── ④ 斜率加速度過濾（防均線即將下彎）────────────────────────────
+            if p.get("use_slope_accel", False):
+                try:
+                    if pullback_mode == "回踩MA60":
+                        sw2 = sw * 2
+                        if len(ma60_s) >= sw2 + 1:
+                            slope_now  = (ma60_0              / ma60_s.iloc[-(sw + 1)]  - 1) * 100
+                            slope_prev = (ma60_s.iloc[-(sw + 1)] / ma60_s.iloc[-(sw2 + 1)] - 1) * 100
+                            if (slope_now - slope_prev) < p.get("slope_accel_min", -0.10):
+                                continue
+                    else:
+                        sw2 = sw * 2
+                        if len(ma20_s) >= sw2 + 1:
+                            slope_now  = (ma20_0              / ma20_s.iloc[-(sw + 1)]  - 1) * 100
+                            slope_prev = (ma20_s.iloc[-(sw + 1)] / ma20_s.iloc[-(sw2 + 1)] - 1) * 100
+                            if (slope_now - slope_prev) < p.get("slope_accel_min", -0.10):
+                                continue
+                except Exception:
+                    pass
+            funnel["④ 均線斜率%"] += 1
+
+            # ④+ 回踩確認（原 ③+，移到斜率之後確認）
             touch_enabled = p.get("touch_enabled", True)
             if touch_enabled:
                 touch_window = p.get("touch_window", 5)
                 touch_tol    = p.get("touch_tol", 3.0)
-                # 回踩確認的均線：MA20/MA60回踩用所選均線；MA5/MA10站回用MA20
                 if pullback_mode == "回踩MA60":
                     ma_ref_series = ma60_s
                 else:
@@ -773,42 +808,9 @@ def run_filter(
                 touched = (window_low <= touch_threshold).any()
                 if not touched:
                     continue
-            funnel["③+ 回踩確認"] += 1
+            funnel["④+ 回踩確認"] += 1
 
-            # ④ 均線斜率（正規化百分比；MA60模式看10日，其餘看MA20近5日）
-            if pullback_mode == "回踩MA60":
-                slope_base = ma60_s.iloc[-11] if len(ma60_s) >= 11 else np.nan
-                slope_curr = ma60_0
-            else:
-                slope_base = ma20_s.iloc[-6] if len(ma20_s) >= 6 else np.nan
-                slope_curr = ma20_0
-            # 修正：slope_base 為 NaN 或 0 時直接跳過，不用 0.0 fallback 遮蔽真實斜率
-            if pd.isna(slope_base) or slope_base == 0 or pd.isna(slope_curr):
-                continue
-            slope_val = (slope_curr / slope_base - 1) * 100
-            if slope_val < p.get("ma_slope_pct_min", 0.0):
-                continue
-
-            # ── [新增] ④+ 斜率加速度過濾：防止均線即將下彎 ──────────────────
-            # 比較「最近一段斜率」vs「前一段斜率」，若急速惡化代表多頭力道衰竭
-            if p.get("use_slope_accel", False):
-                try:
-                    if pullback_mode == "回踩MA60":
-                        if len(ma60_s) >= 21:
-                            slope_now  = (ma60_0           / ma60_s.iloc[-11] - 1) * 100
-                            slope_prev = (ma60_s.iloc[-11]  / ma60_s.iloc[-21] - 1) * 100
-                            if (slope_now - slope_prev) < p.get("slope_accel_min", -0.10):
-                                continue
-                    else:
-                        if len(ma20_s) >= 7:
-                            slope_now  = (ma20_0           / ma20_s.iloc[-4] - 1) * 100
-                            slope_prev = (ma20_s.iloc[-4]  / ma20_s.iloc[-7] - 1) * 100
-                            if (slope_now - slope_prev) < p.get("slope_accel_min", -0.10):
-                                continue
-                except Exception:
-                    pass
-            # ── [新增結束] ────────────────────────────────────────────────────
-
+            # RSI 篩選（歸屬⑦其他條件，但計算放在⑤之前，避免重複計算）
             if p.get("use_rsi_filter", False):
                 rsi_s = rsi(c, 14)
                 rsi_0 = rsi_s.iloc[-1]
@@ -821,7 +823,6 @@ def run_filter(
                         continue
                     if rsi_0 < p.get("rsi_rebound_confirm", 45.0):
                         continue
-            funnel["④ 均線斜率%"] += 1
 
             # ⑤ 量縮洗盤
             v3  = v.iloc[-4:-1].mean()
@@ -1190,27 +1191,66 @@ def main():
     with st.sidebar:
         st.markdown("### ⚙️ 策略參數")
 
+        # ══════════════════════════════════════════════
+        # 【最優先選擇】回踩基準均線 — 決定所有下方預設值
+        # ══════════════════════════════════════════════
+        st.markdown("**🎯 回踩基準均線（優先選擇）**",
+            help="選擇後，下方所有條件將自動套用對應均線的建議預設值。\nMA20=短波段（1~3週）｜MA60=大波段季線（1~3個月）")
+        pullback_base = st.radio(
+            "回踩基準均線",
+            ["回踩MA20", "回踩MA60"],
+            index=0, horizontal=True,
+            help="回踩MA20：短波段（今收在MA20上方0~上限%） | 回踩MA60：大波段季線（今收在MA60上方0~上限%）",
+            label_visibility="collapsed",
+        )
+        is_ma60 = (pullback_base == "回踩MA60")
+        if is_ma60:
+            st.caption("🟠 MA60 模式：大波段季線回踩，容忍度大，停損寬，目標遠")
+        else:
+            st.caption("🔵 MA20 模式：短波段月線回踩，精準快速，停損緊，頻率高")
+        st.divider()
+
+        # ── MA20/MA60 建議預設值（⑦其他條件一律預設關閉）──
+        _def = {
+            # MA20 預設
+            False: dict(
+                momentum_days=20, high_window=60,
+                pullback_lower=-2.0, pullback_upper=8.0,
+                touch_window=5,  touch_tol=2.5,
+                ma_slope_pct_min=0.3,
+                slope_window_ma20=5, slope_window_ma60=10,
+                vol_ratio=0.80, today_vol_min=0.7, today_vol_max=2.5,
+                min_rr=1.5, atr_buf=0.7, max_stop_pct=8.0, swing_window=20,
+                fib_t1=0.382, fib_t2=0.618,
+            ),
+            # MA60 預設
+            True: dict(
+                momentum_days=30, high_window=75,
+                pullback_lower=-5.0, pullback_upper=10.0,
+                touch_window=10, touch_tol=4.0,
+                ma_slope_pct_min=0.1,
+                slope_window_ma20=5, slope_window_ma60=10,
+                vol_ratio=0.68, today_vol_min=0.8, today_vol_max=3.0,
+                min_rr=1.5, atr_buf=1.0, max_stop_pct=13.0, swing_window=35,
+                fib_t1=0.500, fib_t2=1.000,
+            ),
+        }
+        D = _def[is_ma60]
+
         st.markdown("**① 長線多頭**")
         st.caption("MA50 > MA200 且 Close > MA200（固定）")
         st.divider()
 
         st.markdown("**② 動能記憶**",
             help="近N日內，收盤價是否曾突破前M日最高價。用來確認這支股票近期有過強勢動能，不是一路緩跌的弱勢股。N=回看多久、M=定義『高點』的窗口。")
-        momentum_days = st.slider("回看天數 N", 5, 60, 25, 5,
+        momentum_days = st.slider("回看天數 N", 5, 60, D["momentum_days"], 5,
             help="往回看幾天內有沒有出現過突破前高。25日=近一個月內曾創M日新高即符合")
-        high_window   = st.slider("新高窗口 M（天）", 20, 120, 60, 5,
+        high_window   = st.slider("新高窗口 M（天）", 20, 120, D["high_window"], 5,
             help="『前高』的定義窗口。60日=前60日最高價。M越大代表要突破越長期的高點，條件越嚴")
         st.divider()
 
         st.markdown("**③ 波段拉回 — 買點模式**")
-
-        # MA20 / MA60 回踩：單選
-        pullback_base = st.radio(
-            "回踩基準均線",
-            ["回踩MA20", "回踩MA60"],
-            index=0, horizontal=True,
-            help="回踩MA20：短波段（今收在MA20上方0~上限%） | 回踩MA60：大波段季線（今收在MA60上方0~上限%）"
-        )
+        st.caption(f"{'🟠 MA60 季線' if is_ma60 else '🔵 MA20 月線'} 回踩邏輯")
 
         # MA5 / MA10 站回：獨立開關，可同時啟用
         st.caption("站回確認（可複選）")
@@ -1225,57 +1265,73 @@ def main():
         elif use_ma10:
             st.caption("📐 要求今收 > MA10")
 
-        # 距離上限
+        # 距離參數（套用 D[] 預設）
         pullback_lower = st.slider(
-            "回踩低點允許跌破均線 %", -5.0, 1.0, -2.0, 0.5,
+            "回踩低點允許跌破均線 %", -8.0, 1.0, D["pullback_lower"], 0.5,
             help="看近期低點是否小破均線。-2%=允許 Low 跌到均線下方2%以內，但今日收盤仍必須站回基準均線"
         )
         pullback_upper = st.slider(
-            "距基準均線上方最大距離 %", 0.5, 15.0, 8.0, 0.5,
+            "距基準均線上方最大距離 %", 0.5, 20.0, D["pullback_upper"], 0.5,
             help="今日收盤距所選均線（MA20或MA60）不超過此值。站回MA5/MA10時同樣套用此前提，確保還在均線附近"
         )
 
         # 從設定推導內部參數
-        pullback_ma    = 60 if pullback_base == "回踩MA60" else 20
+        pullback_ma    = 60 if is_ma60 else 20
         pullback_mode  = pullback_base  # 向後相容
 
-        if pullback_base == "回踩MA20":
+        if not is_ma60:
             st.caption(f"📐 近期低點可到 MA20 {pullback_lower:.1f}%；今收需站回 MA20 且不高於 +{pullback_upper:.1f}%")
         else:
             st.caption(f"📐 近期低點可到 MA60 {pullback_lower:.1f}%；今收需站回 MA60 且不高於 +{pullback_upper:.1f}%")
+        st.divider()
 
+        # ── ④ 均線斜率（移到 ③+ 之前）──
+        st.markdown("**④ 均線斜率（均線方向）**",
+            help="先確認均線方向向上，才進行回踩確認，避免把均線下彎的死貓彈誤判為有效回踩。")
+        # MA20 斜率窗口
+        slope_window_ma20 = st.slider(
+            "MA20 斜率計算窗口（日）", 3, 15, D["slope_window_ma20"], 1,
+            help="MA20 斜率 = (今日MA20 / N日前MA20 - 1) × 100。窗口越長，斜率越平滑不敏感",
+            disabled=is_ma60,
+        )
+        # MA60 斜率窗口
+        slope_window_ma60 = st.slider(
+            "MA60 斜率計算窗口（日）", 5, 25, D["slope_window_ma60"], 1,
+            help="MA60 斜率 = (今日MA60 / N日前MA60 - 1) × 100。季線變動慢，建議窗口 8~12",
+            disabled=not is_ma60,
+        )
+        active_slope_label = f"MA60 近{slope_window_ma60}日" if is_ma60 else f"MA20 近{slope_window_ma20}日"
+        ma_slope_pct_min = st.slider(
+            f"{active_slope_label} 最小斜率 %", -5.0, 5.0, D["ma_slope_pct_min"], 0.1,
+            help="正規化百分比斜率。正值=均線向上，負值=均線下彎中。建議 MA20≥0.2%、MA60≥0.0%"
+        )
+        st.caption(f"📐 {active_slope_label} 斜率% < {ma_slope_pct_min:.1f}% 則排除")
+        st.divider()
 
-        st.markdown("**③+ 回踩確認**")
+        # ── ④+ 回踩確認（原 ③+，移到 ④ 之後）──
+        st.markdown("**④+ 回踩確認**",
+            help="在確認均線方向向上後，再檢查近期是否真的有發生回踩動作，避免把從未接觸均線的漂浮股誤判。")
         touch_enabled = st.toggle("啟用回踩確認", value=True,
             help="開啟後：要求近N日內Low曾貼近均線，確保真的發生過回踩動作，而非一直飄在均線上方")
         st.caption("🟢 開啟 = 必須有回踩動作｜⚪ 關閉 = 只看今日位置")
         if touch_enabled:
-            touch_window = st.slider("回踩偵測窗口（日）", 3, 20, 5, 1,
+            touch_window = st.slider("回踩偵測窗口（日）", 3, 20, D["touch_window"], 1,
                 help="往回看幾天內有沒有發生回踩。5日=近一週；10日=近兩週")
-            touch_tol = st.slider("回踩容忍度（%）", 0.0, 5.0, 3.0, 0.5,
+            touch_tol = st.slider("回踩容忍度（%）", 0.0, 8.0, D["touch_tol"], 0.5,
                 help="Low 距均線多近算回踩。3%=Low曾進入均線上方3%以內（含跌破均線）即算")
             st.caption(f"📐 近 {touch_window} 日內，Low ≤ 均線 × (1 + {touch_tol:.1f}%)")
         else:
-            touch_window = 5
-            touch_tol    = 3.0
-        st.divider()
-
-        st.markdown("**④ 均線斜率（均線方向）**")
-        slope_label = "MA60 近10日" if pullback_mode == "回踩MA60" else "MA20 近5日"
-        ma_slope_pct_min = st.slider(
-            f"{slope_label} 最小斜率 %", -5.0, 5.0, 0.0, 0.1,
-            help="正規化百分比斜率。MA20=(今日MA20/5日前MA20-1)*100；MA60=(今日MA60/10日前MA60-1)*100"
-        )
-        st.caption(f"📐 {slope_label} 斜率% < {ma_slope_pct_min:.1f}% 則排除")
+            touch_window = D["touch_window"]
+            touch_tol    = D["touch_tol"]
         st.divider()
 
         st.markdown("**⑤ 量縮比例**")
-        vol_ratio = st.slider("近3日量 / 20日量 < Y", 0.3, 1.5, 1.0, 0.05,
+        vol_ratio = st.slider("近3日量 / 20日量 < Y", 0.3, 1.5, D["vol_ratio"], 0.05,
             help="預設放寬至 1.0（量不放大即可）；寬鬆模式下再×1.3")
         st.markdown("**⑤+ 今日轉強量能**")
-        today_vol_min = st.slider("今日量 / 20日量 下限", 0.0, 2.0, 0.6, 0.1,
+        today_vol_min = st.slider("今日量 / 20日量 下限", 0.0, 2.0, D["today_vol_min"], 0.1,
             help="避免轉折日完全沒量。0.6=今日量至少達20日均量的60%")
-        today_vol_max = st.slider("今日量 / 20日量 上限", 0.8, 5.0, 2.0, 0.1,
+        today_vol_max = st.slider("今日量 / 20日量 上限", 0.8, 5.0, D["today_vol_max"], 0.1,
             help="避免爆大量追高。2.0=今日量低於20日均量2倍")
         st.divider()
 
@@ -1348,17 +1404,17 @@ def main():
             st.caption("⚪ 關閉中，法人欄仍顯示供參考")
         st.divider()
 
-        min_rr = st.slider("最低 RR", 0.5, 5.0, 1.5, 0.5,
+        min_rr = st.slider("最低 RR", 0.5, 5.0, D["min_rr"], 0.5,
             help="損益比低於此值的股票不顯示。RR=1.5 代表潛在獲利是潛在虧損的1.5倍")
-        atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 1.5, 0.8, 0.1,
+        atr_buf = st.slider("停損 ATR 緩衝倍數", 0.3, 2.0, D["atr_buf"], 0.1,
             help="停損線 = 前低（或均線）再往下 N 倍ATR。倍數越大停損越寬，越不容易被假跌破洗出去。預設0.8")
-        max_stop_pct = st.slider("最大停損幅度 %", 5.0, 20.0, 10.0, 0.5,
+        max_stop_pct = st.slider("最大停損幅度 %", 5.0, 20.0, D["max_stop_pct"], 0.5,
             help="停損硬上限。10%=不允許停損距離超過買價10%")
-        swing_window = st.slider("波段計算窗口（日）", 10, 60, 30, 5,
+        swing_window = st.slider("波段計算窗口（日）", 10, 60, D["swing_window"], 5,
             help="用來計算前高、前低與目標價。大波段可拉到30~40")
-        fib_t1 = st.slider("T1延伸比例", 0.1, 0.8, 0.382, 0.01,
+        fib_t1 = st.slider("T1延伸比例", 0.1, 0.8, D["fib_t1"], 0.001,
             help="T1=前高+振幅×比例。0.382較適合波段第一段止盈")
-        fib_t2 = st.slider("T2延伸比例", 0.3, 1.2, 1.0, 0.01,
+        fib_t2 = st.slider("T2延伸比例", 0.3, 2.0, D["fib_t2"], 0.001,
             help="T2=前高+振幅×比例。1.0較適合波段第二段目標")
         st.caption(f"📐 停損緩衝 = ATR(14) × {atr_buf}；最大停損 {max_stop_pct:.1f}%；窗口 {swing_window} 日")
         st.divider()
@@ -1415,6 +1471,7 @@ def main():
                   use_ma5=use_ma5, use_ma10=use_ma10,
                   vol_ratio=vol_ratio, min_rr=min_rr, atr_buf=atr_buf,
                   ma_slope_pct_min=ma_slope_pct_min,
+                  slope_window_ma20=slope_window_ma20, slope_window_ma60=slope_window_ma60,
                   today_vol_min=today_vol_min, today_vol_max=today_vol_max,
                   use_bullish_body=use_bullish_body,
                   bullish_body_min_ratio=bullish_body_min_ratio,
