@@ -794,6 +794,8 @@ def run_filter(
             funnel["④ 均線斜率%"] += 1
 
             # ④+ 回踩確認（原 ③+，移到斜率之後確認）
+            # 修正：改為雙邊判斷——Low 曾進入均線上下 touch_tol% 的帶狀區間，
+            # 避免「Low 永遠在均線上方很遠」的漂浮股也通過。
             touch_enabled = p.get("touch_enabled", True)
             if touch_enabled:
                 touch_window = p.get("touch_window", 5)
@@ -802,10 +804,13 @@ def run_filter(
                     ma_ref_series = ma60_s
                 else:
                     ma_ref_series = ma20_s
-                window_low      = l.iloc[-touch_window:]
-                window_ma       = ma_ref_series.iloc[-touch_window:]
-                touch_threshold = window_ma * (1 + touch_tol / 100)
-                touched = (window_low <= touch_threshold).any()
+                window_low = l.iloc[-touch_window:]
+                window_ma  = ma_ref_series.iloc[-touch_window:]
+                # Low 需落在 [均線×(1-tol%), 均線×(1+tol%)] 區間內
+                # 即「從上方接近均線」或「小幅跌破後收回」，不允許完全沒有接觸
+                touch_upper = window_ma * (1 + touch_tol / 100)
+                touch_lower = window_ma * (1 - touch_tol / 100)
+                touched = ((window_low <= touch_upper) & (window_low >= touch_lower)).any()
                 if not touched:
                     continue
             funnel["④+ 回踩確認"] += 1
@@ -889,18 +894,24 @@ def run_filter(
 
                 pullback_count = 0
                 first_pull_pos = None
+                in_pullback    = False   # 追蹤是否正在回踩區間內
 
                 # 從高點後一根掃到昨天（不含今天，避免把當前這次算進去）
+                # 改為「穿越計數」：只有從區間外「新進入」才算一次，
+                # 避免把整段盤整的每一天都各算一次回踩
                 for pos in range(peak_pos + 1, current_pos):
                     ci   = c.iloc[pos]
                     ma_i = ma_ref_series.iloc[pos]
                     if pd.isna(ci) or pd.isna(ma_i) or ma_i == 0:
+                        in_pullback = False
                         continue
                     dist_i = (ci - ma_i) / ma_i * 100
-                    if p["pullback_lower"] <= dist_i <= p["pullback_upper"]:
+                    is_in_zone = p["pullback_lower"] <= dist_i <= p["pullback_upper"]
+                    if is_in_zone and not in_pullback:   # 新進入才計一次
                         pullback_count += 1
                         if first_pull_pos is None:
                             first_pull_pos = pos
+                    in_pullback = is_in_zone
 
                 # 從未拉回過 → 這次是首波
                 if pullback_count == 0:
@@ -928,8 +939,10 @@ def run_filter(
             stop           = max(stop, c0 * (1 - p.get("max_stop_pct", 0.10)))
 
             # ── 止盈：斐波那契延伸（比例由側欄參數決定）──
-            # swing_high / swing_low 統一用波段窗口，振幅一致，目標價不偏移
-            swing_high = h.iloc[-swing_window:].max()
+            # swing_high 改用動能記憶的 M 日窗口取高點（與波段起點一致），
+            # 振幅才能反映真實波段幅度，RR 不會因窗口太短而低估。
+            # swing_low 仍用 swing_window 取近期低點（停損基準）。
+            swing_high = h.iloc[-M:].max()
             amp        = swing_high - swing_low
             fib_t1     = p.get("fib_t1", 0.272)
             fib_t2     = p.get("fib_t2", 0.618)
@@ -979,6 +992,7 @@ def run_filter(
                 "損益比(RR)":    rr,
                 "首波拉回":      "✅" if first else "—",
                 "RSI":           round(rsi(c, 14).iloc[-1], 1),
+                "離均線":        round(close_dist, 2),
                 "法人":          consec,
                 "MA20":          round(ma20_0, 2),
                 "MA60":          round(ma60_0, 2),
@@ -1624,7 +1638,7 @@ def main():
             disp = [
                 "K線分析","代號","名稱","收盤價","漲跌幅(%)","拉回深度(%)",
                 "量縮比","今日量/均量","均線斜率%","轉折確認","距高點天數",
-                "空間%","損益比(RR)","首波拉回","法人","RSI","停損價","目標T1","目標T2",
+                "空間%","損益比(RR)","首波拉回","法人","RSI","離均線","停損價","目標T1","目標T2",
             ]
             # 法人欄：依連續買超天數顯示顏色標籤
             def _inst_label(v):
@@ -1691,6 +1705,8 @@ def main():
                                     ),
                     "RSI":           st.column_config.NumberColumn("RSI", format="%.1f",
                                         help="RSI(14)；以本地收盤價計算"),
+                    "離均線":        st.column_config.NumberColumn("離均線", format="%.2f%%",
+                                        help="今日收盤距基準均線(MA20/MA60)的百分比距離；正=站上，負=跌破"),
                 },
                 hide_index=True,
             )
