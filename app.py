@@ -1230,7 +1230,7 @@ def main():
                 touch_window=10, touch_tol=4.0,
                 ma_slope_pct_min=0.1,
                 slope_window_ma20=5, slope_window_ma60=10,
-                vol_ratio=0.68, today_vol_min=0.8, today_vol_max=3.0,
+                vol_ratio=0.80, today_vol_min=0.6, today_vol_max=3.0,
                 min_rr=1.5, atr_buf=1.0, max_stop_pct=13.0, swing_window=35,
                 fib_t1=0.500, fib_t2=1.000,
             ),
