@@ -1203,6 +1203,20 @@ def main():
     # SIDEBAR
     # ════════════════════════════════════════════════
     with st.sidebar:
+        # ── 抓取按鈕（置頂，方便進來就能直接抓）──
+        run_btn = st.button("🚀 抓取最新資料", type="primary", use_container_width=True,
+                            help="點一次即可，資料會記憶在本頁。調整參數不需再按此按鈕。")
+
+        # 資料狀態顯示
+        if has_data:
+            fetch_time = st.session_state.get("last_fetch_time", "")
+            fetch_cnt  = st.session_state.get("success_cnt", 0)
+            st.success(f"✅ 資料已載入 {fetch_cnt} 檔\n{fetch_time}")
+            st.caption("⬆️ 調整下方參數即可即時重新篩選")
+        else:
+            st.warning("尚無資料，請先按上方按鈕抓取")
+
+        st.divider()
         st.markdown("### ⚙️ 策略參數")
 
         # ══════════════════════════════════════════════
@@ -1445,20 +1459,6 @@ def main():
         st.caption(f"已設定 **{len(user_ids)}** 檔股票")
         st.divider()
 
-        # ── 抓取按鈕 ──
-        run_btn = st.button("🚀 抓取最新資料", type="primary", use_container_width=True,
-                            help="點一次即可，資料會記憶在本頁。調整參數不需再按此按鈕。")
-
-        # 資料狀態顯示
-        if has_data:
-            fetch_time = st.session_state.get("last_fetch_time", "")
-            fetch_cnt  = st.session_state.get("success_cnt", 0)
-            st.success(f"✅ 資料已載入 {fetch_cnt} 檔\n{fetch_time}")
-            st.caption("⬆️ 調整上方參數即可即時重新篩選")
-        else:
-            st.warning("尚無資料，請先按上方按鈕抓取")
-
-        st.divider()
         st.markdown("### ℹ️ 資料來源")
         st.caption("FinMind API ｜ 需 Token（已設定於 Secrets）")
         used = len(user_ids)
